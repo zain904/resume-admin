@@ -66,6 +66,26 @@ const navItems = [
             </svg>
         ),
     },
+    {
+        label: "Onboarding Funnel",
+        href: "/dashboard/onboarding",
+        icon: (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+                    d="M3 5h18l-7 8v4l-4 2v-6L3 5z" />
+            </svg>
+        ),
+    },
+    {
+        label: "Trial Activation",
+        href: "/dashboard/trial-activation",
+        icon: (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+                    d="M12 8v4l2.5 2.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+        ),
+    },
 ];
 
 interface SidebarProps {

@@ -12,6 +12,7 @@ const pageTitles: Record<string, string> = {
     "/dashboard/subscriptions": "Subscriptions",
     "/dashboard/resumes": "Resumes",
     "/dashboard/templates": "Templates",
+    "/dashboard/onboarding": "Onboarding Funnel",
 };
 
 export default function DashboardLayout({
