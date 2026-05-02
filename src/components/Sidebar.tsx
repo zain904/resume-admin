@@ -67,7 +67,7 @@ const navItems = [
         ),
     },
     {
-        label: "Onboarding Funnel",
+        label: "Funnels",
         href: "/dashboard/onboarding",
         icon: (
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -83,6 +83,16 @@ const navItems = [
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
                     d="M12 8v4l2.5 2.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+        ),
+    },
+    {
+        label: "Subscription Funnel",
+        href: "/dashboard/subscription-funnel",
+        icon: (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+                    d="M3 3v18h18M7 14l4-4 3 3 5-6" />
             </svg>
         ),
     },
