@@ -97,6 +97,7 @@ export default function SubscriptionsPage() {
             if (cycleFilter) params.set("billing_cycle", cycleFilter);
 
             const res = await api.get(`/admin/getAllSubscriptions?${params}`);
+            console.log(res.data.data ?? [])
             setSubs(res.data.data ?? []);
             setSummary(res.data.summary ?? null);
             setPagination(res.data.pagination ?? { total: 0, page: p, limit: 15, totalPages: 1 });

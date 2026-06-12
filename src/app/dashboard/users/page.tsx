@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import api from "@/lib/api";
 
@@ -25,63 +25,82 @@ interface User {
     } | null;
 }
 
+interface Pagination {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+}
+
+interface Summary {
+    total: number;
+    members: number;
+    guests: number;
+}
+
 type TabType = "all" | "user" | "guest";
+
+const LIMIT = 15;
 
 export default function UsersPage() {
     const [users, setUsers] = useState<User[]>([]);
-    const [filtered, setFiltered] = useState<User[]>([]);
+    const [summary, setSummary] = useState<Summary>({ total: 0, members: 0, guests: 0 });
+    const [pagination, setPagination] = useState<Pagination>({ total: 0, page: 1, limit: LIMIT, totalPages: 1 });
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState("");
+    const [searchInput, setSearchInput] = useState("");
     const [tab, setTab] = useState<TabType>("all");
     const [view, setView] = useState<"table" | "grid">("table");
+    const [page, setPage] = useState(1);
 
-    const fetchUsers = async () => {
+    const fetchUsers = useCallback(async (p: number, currentTab: TabType, currentSearch: string) => {
         setLoading(true);
         try {
-            const res = await api.get("/admin/getAllUsers");
-            // handle both array response and paginated response
-            const data = Array.isArray(res.data)
-                ? res.data
-                : res.data.data?.users || res.data.data || [];
+            const params = new URLSearchParams({ page: p.toString(), limit: LIMIT.toString() });
+            if (currentTab !== "all") params.set("userType", currentTab);
+            if (currentSearch.trim()) params.set("search", currentSearch.trim());
+
+            const res = await api.get(`/admin/getAllUsers?${params}`);
+            const data = res.data.data ?? [];
+            const pg = res.data.pagination ?? { total: 0, page: p, limit: LIMIT, totalPages: 1 };
+            const sum = res.data.summary ?? null;
+
             setUsers(data);
-            setFiltered(data);
+            setPagination(pg);
+
+            // If backend sends a summary use it, otherwise build from total
+            if (sum) {
+                setSummary(sum);
+            } else if (currentTab === "all" && !currentSearch) {
+                setSummary(prev => ({ ...prev, total: pg.total }));
+            }
         } catch (err) {
             console.error("Failed to fetch users:", err);
             setUsers([]);
-            setFiltered([]);
         } finally {
             setLoading(false);
         }
-    };
-
-    useEffect(() => {
-        fetchUsers();
     }, []);
 
-    // Filter by tab + search
+    // Reset to page 1 when filters change
     useEffect(() => {
-        let result = users;
+        setPage(1);
+        fetchUsers(1, tab, search);
+    }, [tab, search]);
 
-        if (tab !== "all") {
-            result = result.filter((u) => u.userType === tab);
-        }
+    useEffect(() => {
+        fetchUsers(page, tab, search);
+    }, [page]);
 
-        if (search.trim()) {
-            const q = search.toLowerCase();
-            result = result.filter(
-                (u) =>
-                    u.name?.toLowerCase().includes(q) ||
-                    u.email?.toLowerCase().includes(q)
-            );
-        }
+    // Debounce search input
+    useEffect(() => {
+        const t = setTimeout(() => setSearch(searchInput), 400);
+        return () => clearTimeout(t);
+    }, [searchInput]);
 
-        setFiltered(result);
-    }, [tab, search, users]);
-
-    const counts = {
-        all: users.length,
-        user: users.filter((u) => u.userType === "user").length,
-        guest: users.filter((u) => u.userType === "guest").length,
+    const handleTabChange = (t: TabType) => {
+        setTab(t);
+        setPage(1);
     };
 
     const getPlan = (user: User) => {
@@ -103,89 +122,77 @@ export default function UsersPage() {
         "from-[#0ea5e9] to-[#10b981]",
     ];
 
-    const tabs: { key: TabType; label: string; color: string }[] = [
-        { key: "all", label: "All Users", color: "#0ea5e9" },
-        { key: "user", label: "Members", color: "#10b981" },
-        { key: "guest", label: "Guests", color: "#f59e0b" },
+    const tabs: { key: TabType; label: string; color: string; count: number }[] = [
+        { key: "all", label: "All Users", color: "#0ea5e9", count: summary.total },
+        { key: "user", label: "Members", color: "#10b981", count: summary.members },
+        { key: "guest", label: "Guests", color: "#f59e0b", count: summary.guests },
     ];
+
+    const showingFrom = ((pagination.page - 1) * LIMIT) + 1;
+    const showingTo = Math.min(pagination.page * LIMIT, pagination.total);
 
     return (
         <div className="space-y-5 pb-6">
 
-            {/* Header */}
+            {/* ── Header ── */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                    <h2 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>
-                        Users
-                    </h2>
+                    <h2 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>Users</h2>
                     <p className="text-sm mt-0.5" style={{ color: "var(--text-muted)" }}>
-                        {users.length} total users registered
+                        {pagination.total} total users registered
                     </p>
                 </div>
 
                 {/* View toggle */}
                 <div className="flex items-center gap-1 p-1 rounded-xl"
                     style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
-                    <button onClick={() => setView("table")}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
-                        style={{
-                            background: view === "table" ? "var(--accent)" : "transparent",
-                            color: view === "table" ? "white" : "var(--text-muted)",
-                        }}>
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                                d="M3 10h18M3 14h18M10 6h11M10 18h11M3 6h.01M3 18h.01" />
-                        </svg>
-                        Table
-                    </button>
-                    <button onClick={() => setView("grid")}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
-                        style={{
-                            background: view === "grid" ? "var(--accent)" : "transparent",
-                            color: view === "grid" ? "white" : "var(--text-muted)",
-                        }}>
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                                d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-                        </svg>
-                        Grid
-                    </button>
+                    {(["table", "grid"] as const).map((v) => (
+                        <button key={v} onClick={() => setView(v)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                            style={{
+                                background: view === v ? "var(--accent)" : "transparent",
+                                color: view === v ? "white" : "var(--text-muted)",
+                            }}>
+                            {v === "table" ? (
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                        d="M3 10h18M3 14h18M10 6h11M10 18h11M3 6h.01M3 18h.01" />
+                                </svg>
+                            ) : (
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                        d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                                </svg>
+                            )}
+                            {v.charAt(0).toUpperCase() + v.slice(1)}
+                        </button>
+                    ))}
                 </div>
             </div>
 
-            {/* ── TABS ── */}
+            {/* ── Tabs + Search ── */}
             <div className="flex flex-col sm:flex-row gap-3">
-
-                {/* Tab buttons */}
                 <div className="flex gap-2">
                     {tabs.map((t) => (
-                        <button
-                            key={t.key}
-                            onClick={() => setTab(t.key)}
+                        <button key={t.key} onClick={() => handleTabChange(t.key)}
                             className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200"
                             style={{
                                 background: tab === t.key ? t.color + "20" : "var(--bg-card)",
                                 color: tab === t.key ? t.color : "var(--text-secondary)",
-                                border: tab === t.key
-                                    ? `1px solid ${t.color}40`
-                                    : "1px solid var(--border)",
-                            }}
-                        >
+                                border: tab === t.key ? `1px solid ${t.color}40` : "1px solid var(--border)",
+                            }}>
                             {t.label}
-                            <span
-                                className="px-1.5 py-0.5 rounded-md text-xs font-bold min-w-[20px] text-center"
+                            <span className="px-1.5 py-0.5 rounded-md text-xs font-bold min-w-[20px] text-center"
                                 style={{
                                     background: tab === t.key ? t.color : "var(--bg-secondary)",
                                     color: tab === t.key ? "white" : "var(--text-muted)",
-                                }}
-                            >
-                                {counts[t.key]}
+                                }}>
+                                {t.count}
                             </span>
                         </button>
                     ))}
                 </div>
 
-                {/* Search */}
                 <div className="relative flex-1">
                     <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4"
                         style={{ color: "var(--text-muted)" }}
@@ -194,28 +201,23 @@ export default function UsersPage() {
                             d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                     </svg>
                     <input
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
+                        value={searchInput}
+                        onChange={(e) => { setSearchInput(e.target.value); setPage(1); }}
                         placeholder="Search by name or email..."
                         className="w-full pl-10 pr-4 py-2.5 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#0ea5e9]/30"
-                        style={{
-                            background: "var(--bg-card)",
-                            border: "1px solid var(--border)",
-                            color: "var(--text-primary)",
-                        }}
+                        style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
                     />
                 </div>
             </div>
 
-            {/* ── STAT PILLS ── */}
+            {/* ── Stat Pills ── */}
             <div className="grid grid-cols-3 gap-3">
                 {[
-                    { label: "Total", value: counts.all, color: "#0ea5e9", gradient: "from-[#0ea5e9] to-[#7c3aed]" },
-                    { label: "Members", value: counts.user, color: "#10b981", gradient: "from-[#10b981] to-[#0ea5e9]" },
-                    { label: "Guests", value: counts.guest, color: "#f59e0b", gradient: "from-[#f59e0b] to-[#ef4444]" },
+                    { label: "Total", value: summary.total, gradient: "from-[#0ea5e9] to-[#7c3aed]" },
+                    { label: "Members", value: summary.members, gradient: "from-[#10b981] to-[#0ea5e9]" },
+                    { label: "Guests", value: summary.guests, gradient: "from-[#f59e0b] to-[#ef4444]" },
                 ].map((s) => (
-                    <div key={s.label}
-                        className="rounded-2xl p-4 flex items-center gap-3"
+                    <div key={s.label} className="rounded-2xl p-4 flex items-center gap-3"
                         style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
                         <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${s.gradient} flex items-center justify-center text-white shrink-0`}>
                             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -224,21 +226,19 @@ export default function UsersPage() {
                             </svg>
                         </div>
                         <div>
-                            <p className="text-2xl font-black" style={{ color: "var(--text-primary)" }}>
-                                {s.value}
-                            </p>
+                            <p className="text-2xl font-black" style={{ color: "var(--text-primary)" }}>{s.value}</p>
                             <p className="text-xs" style={{ color: "var(--text-muted)" }}>{s.label}</p>
                         </div>
                     </div>
                 ))}
             </div>
 
-            {/* Loading */}
+            {/* ── Content ── */}
             {loading ? (
                 <div className="flex items-center justify-center h-64">
                     <div className="w-8 h-8 border-2 border-[#0ea5e9] border-t-transparent rounded-full animate-spin" />
                 </div>
-            ) : filtered.length === 0 ? (
+            ) : users.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-64 gap-3">
                     <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#0ea5e9]/10 to-[#7c3aed]/10 flex items-center justify-center">
                         <svg className="w-8 h-8" style={{ color: "var(--text-muted)" }}
@@ -254,7 +254,7 @@ export default function UsersPage() {
 
             ) : view === "table" ? (
 
-                /* TABLE VIEW */
+                /* ── TABLE VIEW ── */
                 <div className="rounded-2xl overflow-hidden"
                     style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
                     <div className="overflow-x-auto">
@@ -262,16 +262,13 @@ export default function UsersPage() {
                             <thead>
                                 <tr style={{ borderBottom: "1px solid var(--border)" }}>
                                     {["User", "Profile", "Email", "Type", "Plan", "Provider", "Joined", "Action"].map((h) => (
-                                        <th key={h}
-                                            className="text-left px-5 py-3.5 text-xs font-bold uppercase tracking-wider"
-                                            style={{ color: "var(--text-muted)" }}>
-                                            {h}
-                                        </th>
+                                        <th key={h} className="text-left px-5 py-3.5 text-xs font-bold uppercase tracking-wider"
+                                            style={{ color: "var(--text-muted)" }}>{h}</th>
                                     ))}
                                 </tr>
                             </thead>
                             <tbody>
-                                {filtered.map((user, i) => {
+                                {users.map((user, i) => {
                                     const plan = getPlan(user);
                                     const grad = gradients[i % gradients.length];
                                     const displayName = user.Profile?.first_name
@@ -281,7 +278,7 @@ export default function UsersPage() {
 
                                     return (
                                         <tr key={user.id}
-                                            style={{ borderBottom: i < filtered.length - 1 ? "1px solid var(--border)" : "none" }}
+                                            style={{ borderBottom: i < users.length - 1 ? "1px solid var(--border)" : "none" }}
                                             className="transition-colors hover:bg-[#0ea5e9]/5">
 
                                             {/* User */}
@@ -366,7 +363,7 @@ export default function UsersPage() {
                                             <td className="px-5 py-4">
                                                 <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
                                                     {new Date(user.createdAt).toLocaleDateString("en-US", {
-                                                        month: "short", day: "numeric", year: "numeric"
+                                                        month: "short", day: "numeric", year: "numeric",
                                                     })}
                                                 </p>
                                             </td>
@@ -392,9 +389,9 @@ export default function UsersPage() {
 
             ) : (
 
-                /* GRID VIEW */
+                /* ── GRID VIEW ── */
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                    {filtered.map((user, i) => {
+                    {users.map((user, i) => {
                         const plan = getPlan(user);
                         const grad = gradients[i % gradients.length];
                         const isUser = user.userType === "user";
@@ -437,14 +434,10 @@ export default function UsersPage() {
                                         </span>
                                     </div>
 
-                                    <h3 className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>
-                                        {displayName}
-                                    </h3>
+                                    <h3 className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>{displayName}</h3>
 
                                     {user.Profile?.job_title ? (
-                                        <p className="text-xs mt-0.5" style={{ color: "var(--accent)" }}>
-                                            {user.Profile.job_title}
-                                        </p>
+                                        <p className="text-xs mt-0.5" style={{ color: "var(--accent)" }}>{user.Profile.job_title}</p>
                                     ) : (
                                         <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>No profile</p>
                                     )}
@@ -456,9 +449,7 @@ export default function UsersPage() {
                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                                                     d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                                             </svg>
-                                            <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>
-                                                {user.email}
-                                            </p>
+                                            <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>{user.email}</p>
                                         </div>
                                     )}
 
@@ -498,12 +489,81 @@ export default function UsersPage() {
                 </div>
             )}
 
-            {/* Results count */}
-            {!loading && filtered.length > 0 && (
+            {/* ── Pagination ── */}
+            {!loading && pagination.totalPages > 1 && (
+                <div className="flex items-center justify-between">
+                    <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+                        Showing {showingFrom}–{showingTo} of {pagination.total} users
+                    </p>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setPage(1)}
+                            disabled={page === 1}
+                            className="px-3 py-2 rounded-xl text-sm font-medium disabled:opacity-40"
+                            style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-primary)" }}>
+                            «
+                        </button>
+                        <button
+                            onClick={() => setPage(p => Math.max(1, p - 1))}
+                            disabled={page === 1}
+                            className="px-4 py-2 rounded-xl text-sm font-medium disabled:opacity-40"
+                            style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-primary)" }}>
+                            Previous
+                        </button>
+
+                        {/* Page number pills */}
+                        <div className="flex gap-1">
+                            {Array.from({ length: pagination.totalPages }, (_, i) => i + 1)
+                                .filter(p => p === 1 || p === pagination.totalPages || Math.abs(p - page) <= 1)
+                                .reduce<(number | "...")[]>((acc, p, idx, arr) => {
+                                    if (idx > 0 && p - (arr[idx - 1] as number) > 1) acc.push("...");
+                                    acc.push(p);
+                                    return acc;
+                                }, [])
+                                .map((p, i) =>
+                                    p === "..." ? (
+                                        <span key={`ellipsis-${i}`} className="px-2 py-2 text-sm"
+                                            style={{ color: "var(--text-muted)" }}>…</span>
+                                    ) : (
+                                        <button key={p}
+                                            onClick={() => setPage(p as number)}
+                                            className="w-9 h-9 rounded-xl text-sm font-semibold transition-all"
+                                            style={{
+                                                background: page === p ? "#0ea5e9" : "var(--bg-card)",
+                                                color: page === p ? "white" : "var(--text-primary)",
+                                                border: page === p ? "none" : "1px solid var(--border)",
+                                            }}>
+                                            {p}
+                                        </button>
+                                    )
+                                )}
+                        </div>
+
+                        <button
+                            onClick={() => setPage(p => Math.min(pagination.totalPages, p + 1))}
+                            disabled={page === pagination.totalPages}
+                            className="px-4 py-2 rounded-xl text-sm font-medium disabled:opacity-40"
+                            style={{ background: "#0ea5e9", color: "white" }}>
+                            Next
+                        </button>
+                        <button
+                            onClick={() => setPage(pagination.totalPages)}
+                            disabled={page === pagination.totalPages}
+                            className="px-3 py-2 rounded-xl text-sm font-medium disabled:opacity-40"
+                            style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-primary)" }}>
+                            »
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Results count (single page) */}
+            {!loading && users.length > 0 && pagination.totalPages <= 1 && (
                 <p className="text-xs text-center" style={{ color: "var(--text-muted)" }}>
-                    Showing {filtered.length} of {users.length} users
+                    Showing all {pagination.total} users
                 </p>
             )}
         </div>
     );
 }
+
