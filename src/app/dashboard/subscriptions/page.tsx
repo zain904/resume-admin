@@ -1,332 +1,262 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import api from "@/lib/api";
-
-interface SubscriptionPlan {
-    id: string;
-    plan_tier: string;
-    name: string;
-    description: string;
-    monthly_price: string;
-    annual_price: string;
-    profile_allowed: number;
-    template_allowed: number;
-    ai_feature: boolean;
-    history_feature: boolean;
-    is_free: boolean;
-    is_popular: boolean;
-}
-
-interface SubUser {
-    id: string;
-    name: string;
-    email: string;
-    userType: string;
-    providerType: string;
-    createdAt: string;
-}
+import {
+    Badge,
+    DataTable,
+    ErrorBanner,
+    PageContent,
+    PageHeader,
+    PageShell,
+    PaginationBar,
+    Panel,
+    SELECT_CLASS,
+    StatGrid,
+    UserLink,
+    formatBillingCycle,
+    tableCellClass,
+    tableRowBorder,
+    tableRowClass,
+} from "@/components/admin/AdminUI";
 
 interface Subscription {
     id: string;
     userId: string;
-    subscription_plan_id: string;
     status: string;
     billing_cycle: string;
-    started_at: string;
     expires_at: string;
-    auto_renew: boolean;
-    createdAt: string;
-    updatedAt: string;
-    isExpired: boolean;
-    isExpiringSoon: boolean;
-    daysRemaining: number;
-    subscriptionPlan: SubscriptionPlan;
-    user: SubUser;
+    is_trial: boolean;
+    daysRemaining: number | null;
+    isExpired?: boolean;
+    isLifetime?: boolean;
+    isExpiringSoon?: boolean;
+    subscriptionPlan: { plan_tier: string };
+    user: { name: string; email: string; userType: string };
 }
 
 interface Summary {
     total: number;
     active: number;
     expired: number;
-    basicPlan: number;
     proPlan: number;
 }
 
-interface Pagination {
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
+const PLAN_LABEL: Record<string, string> = {
+    premium_pro: "Pro",
+    basic: "Free",
+    premium: "Legacy",
+};
+
+const STATUS_LABEL: Record<string, string> = {
+    active: "Active",
+    trial: "Trial",
+    trial_started: "Trial",
+    cancelled_active: "Cancelled",
+    pending: "Pending",
+    expired: "Expired",
+};
+
+const STATUS_TONE: Record<string, "success" | "warning" | "purple" | "neutral"> = {
+    active: "success",
+    trial: "purple",
+    trial_started: "purple",
+    cancelled_active: "warning",
+    expired: "neutral",
+    pending: "neutral",
+};
+
+function formatStatus(status: string) {
+    return STATUS_LABEL[status] ?? status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-const TIER_MAP: Record<string, { label: string; color: string; bg: string }> = {
-    premium_pro: { label: "Pro ⭐", color: "#8b5cf6", bg: "#8b5cf615" },
-    premium: { label: "Premium", color: "#0ea5e9", bg: "#0ea5e915" },
-    basic: { label: "Basic", color: "#64748b", bg: "#64748b15" },
-};
-
-const STATUS_MAP: Record<string, { color: string; bg: string; dot: string }> = {
-    active: { color: "#10b981", bg: "#10b98115", dot: "bg-emerald-400" },
-    expired: { color: "#ef4444", bg: "#ef444415", dot: "bg-red-400" },
-    cancelled: { color: "#f59e0b", bg: "#f59e0b15", dot: "bg-amber-400" },
-};
-
-function formatDate(iso: string) {
+function formatExpiryDate(iso: string, isLifetime?: boolean) {
+    if (isLifetime) return "Lifetime";
     const d = new Date(iso);
-    if (d.getFullYear() > 2100) return "Lifetime";
-    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    if (Number.isNaN(d.getTime())) return "—";
+    if (d.getUTCFullYear() >= 2100) return "Lifetime";
+    return d.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        timeZone: "UTC",
+    });
 }
+
+function formatDaysLeft(sub: Subscription) {
+    if (sub.isLifetime || sub.daysRemaining == null) return "—";
+    if (sub.isExpired || sub.daysRemaining <= 0) return "Expired";
+    if (sub.isExpiringSoon) return `${sub.daysRemaining}d left`;
+    return `${sub.daysRemaining}d`;
+}
+
+function daysLeftTone(sub: Subscription): "warning" | "neutral" | "success" {
+    if (sub.isExpired || (sub.daysRemaining != null && sub.daysRemaining <= 0)) return "warning";
+    if (sub.isExpiringSoon) return "warning";
+    return "neutral";
+}
+
+const TABLE_COLUMNS = [
+    { label: "User", className: "w-[28%]" },
+    { label: "Plan", className: "w-[12%]" },
+    { label: "Status", className: "w-[14%]" },
+    { label: "Billing", className: "w-[14%]" },
+    { label: "Expires", className: "w-[18%]" },
+    { label: "Days left", className: "w-[14%]" },
+];
 
 export default function SubscriptionsPage() {
     const [subs, setSubs] = useState<Subscription[]>([]);
     const [summary, setSummary] = useState<Summary | null>(null);
-    const [pagination, setPagination] = useState<Pagination>({ total: 0, page: 1, limit: 15, totalPages: 1 });
+    const [totalPages, setTotalPages] = useState(1);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
     const [statusFilter, setStatusFilter] = useState("");
     const [tierFilter, setTierFilter] = useState("");
     const [cycleFilter, setCycleFilter] = useState("");
+    const [showFree, setShowFree] = useState(true);
     const [page, setPage] = useState(1);
 
-    const fetchSubs = async (p = page) => {
+    const fetchSubs = useCallback(async (p: number) => {
         setLoading(true);
+        setError(null);
         try {
-            const params = new URLSearchParams({ page: p.toString(), limit: "15" });
+            const params = new URLSearchParams({ page: String(p), limit: "20" });
             if (statusFilter) params.set("status", statusFilter);
             if (tierFilter) params.set("plan_tier", tierFilter);
             if (cycleFilter) params.set("billing_cycle", cycleFilter);
 
             const res = await api.get(`/admin/getAllSubscriptions?${params}`);
-            console.log(res.data.data ?? [])
-            setSubs(res.data.data ?? []);
-            setSummary(res.data.summary ?? null);
-            setPagination(res.data.pagination ?? { total: 0, page: p, limit: 15, totalPages: 1 });
+            let rows: Subscription[] = res.data?.data ?? [];
+            if (!showFree) {
+                rows = rows.filter(
+                    (s) => !(s.subscriptionPlan?.plan_tier === "basic" && s.billing_cycle === "free")
+                );
+            }
+            setSubs(rows);
+            setSummary(res.data?.summary ?? null);
+            setTotalPages(res.data?.pagination?.totalPages ?? 1);
         } catch {
             setSubs([]);
+            setError("Unable to load subscriptions.");
         } finally {
             setLoading(false);
         }
-    };
+    }, [statusFilter, tierFilter, cycleFilter, showFree]);
 
-    useEffect(() => { setPage(1); fetchSubs(1); }, [statusFilter, tierFilter, cycleFilter]);
-    useEffect(() => { fetchSubs(page); }, [page]);
+    useEffect(() => { setPage(1); }, [statusFilter, tierFilter, cycleFilter, showFree]);
+    useEffect(() => { fetchSubs(page); }, [page, fetchSubs]);
 
     return (
-        <div className="space-y-5 pb-6">
+        <PageShell>
+            <PageHeader title="Subscriptions" description="User plans, billing, and trial status." />
 
-            {/* ── Header ───────────────────────────────────────── */}
-            <div>
-                <h2 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>Subscriptions</h2>
-                <p className="text-sm mt-0.5" style={{ color: "var(--text-muted)" }}>
-                    {pagination.total} total subscriptions
-                </p>
-            </div>
-
-            {/* ── Summary pills ────────────────────────────────── */}
-            {summary && (
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                    {[
-                        { label: "Total", value: summary.total, color: "#0ea5e9", bg: "#0ea5e915" },
-                        { label: "Active", value: summary.active, color: "#10b981", bg: "#10b98115" },
-                        { label: "Expired", value: summary.expired, color: "#ef4444", bg: "#ef444415" },
-                        { label: "Basic", value: summary.basicPlan, color: "#64748b", bg: "#64748b15" },
-                        { label: "Pro", value: summary.proPlan, color: "#8b5cf6", bg: "#8b5cf615" },
-                    ].map(s => (
-                        <div key={s.label} className="rounded-2xl p-4"
-                            style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
-                            <p className="text-2xl font-black" style={{ color: s.color }}>{s.value}</p>
-                            <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>{s.label}</p>
-                        </div>
-                    ))}
-                </div>
+            {summary && !loading && (
+                <StatGrid
+                    items={[
+                        { label: "Total", value: summary.total },
+                        { label: "Active", value: summary.active },
+                        { label: "Pro", value: summary.proPlan },
+                        { label: "Expired", value: summary.expired },
+                    ]}
+                />
             )}
 
-            {/* ── Filters ──────────────────────────────────────── */}
-            <div className="flex flex-wrap gap-3">
-                {/* Status */}
-                <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-                    className="px-4 py-2.5 rounded-xl text-sm focus:outline-none"
-                    style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-primary)" }}>
-                    <option value="">All Status</option>
+            <div className="flex flex-wrap items-center gap-2">
+                <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={SELECT_CLASS}>
+                    <option value="">All status</option>
                     <option value="active">Active</option>
+                    <option value="trial">Trial</option>
                     <option value="expired">Expired</option>
-                    <option value="cancelled">Cancelled</option>
                 </select>
-
-                {/* Plan tier */}
-                <select value={tierFilter} onChange={e => setTierFilter(e.target.value)}
-                    className="px-4 py-2.5 rounded-xl text-sm focus:outline-none"
-                    style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-primary)" }}>
-                    <option value="">All Plans</option>
-                    <option value="basic">Basic</option>
-                    <option value="premium">Premium</option>
+                <select value={tierFilter} onChange={(e) => setTierFilter(e.target.value)} className={SELECT_CLASS}>
+                    <option value="">All plans</option>
+                    <option value="basic">Free</option>
                     <option value="premium_pro">Pro</option>
                 </select>
-
-                {/* Billing cycle */}
-                <select value={cycleFilter} onChange={e => setCycleFilter(e.target.value)}
-                    className="px-4 py-2.5 rounded-xl text-sm focus:outline-none"
-                    style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-primary)" }}>
-                    <option value="">All Cycles</option>
+                <select value={cycleFilter} onChange={(e) => setCycleFilter(e.target.value)} className={SELECT_CLASS}>
+                    <option value="">All billing</option>
+                    <option value="free">Free</option>
+                    <option value="weekly">Weekly</option>
                     <option value="monthly">Monthly</option>
                     <option value="annual">Annual</option>
+                    <option value="lifetime">Lifetime</option>
                 </select>
-
-                {(statusFilter || tierFilter || cycleFilter) && (
-                    <button onClick={() => { setStatusFilter(""); setTierFilter(""); setCycleFilter(""); }}
-                        className="px-4 py-2.5 rounded-xl text-sm font-medium"
-                        style={{ background: "var(--bg-secondary)", color: "var(--text-muted)" }}>
-                        Clear filters
-                    </button>
-                )}
+                <label className="flex items-center gap-2 text-sm" style={{ color: "var(--text-secondary)" }}>
+                    <input type="checkbox" checked={showFree} onChange={(e) => setShowFree(e.target.checked)} />
+                    Show free accounts
+                </label>
             </div>
 
-            {/* ── Table ────────────────────────────────────────── */}
-            <div className="rounded-2xl overflow-hidden"
-                style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
-                {loading ? (
-                    <div className="flex items-center justify-center h-48">
-                        <div className="w-7 h-7 border-2 border-[#0ea5e9] border-t-transparent rounded-full animate-spin" />
-                    </div>
-                ) : subs.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-48 gap-2">
-                        <svg className="w-10 h-10" style={{ color: "var(--text-muted)" }}
-                            fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                                d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-                        </svg>
-                        <p className="text-sm" style={{ color: "var(--text-muted)" }}>No subscriptions found</p>
-                    </div>
-                ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full">
-                            <thead>
-                                <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                                    {["User", "Plan", "Status", "Billing", "Features", "Started", "Expires", "Days Left"].map(h => (
-                                        <th key={h} className="text-left px-5 py-3.5 text-xs font-bold uppercase tracking-wider"
-                                            style={{ color: "var(--text-muted)" }}>{h}</th>
-                                    ))}
+            {error && !loading && <ErrorBanner message={error} />}
+
+            <Panel noPadding>
+                <PageContent loading={loading} error={null} isEmpty={subs.length === 0} emptyMessage="No subscriptions match your filters.">
+                    <DataTable columns={TABLE_COLUMNS}>
+                        {subs.map((sub) => {
+                            const tier = sub.subscriptionPlan?.plan_tier ?? "basic";
+                            const displayStatus = sub.status;
+                            const tone = STATUS_TONE[displayStatus] ?? "neutral";
+                            const daysTone = daysLeftTone(sub);
+                            const daysLabel = formatDaysLeft(sub);
+                            return (
+                                <tr key={sub.id} className={tableRowClass()} style={tableRowBorder()}>
+                                    <td className={tableCellClass()}>
+                                        <UserLink
+                                            userId={sub.userId}
+                                            name={sub.user?.name}
+                                            email={sub.user?.email}
+                                            guest={sub.user?.userType === "guest"}
+                                        />
+                                    </td>
+                                    <td className={tableCellClass()}>
+                                        <Badge tone={tier === "premium_pro" ? "purple" : "neutral"}>
+                                            {PLAN_LABEL[tier] ?? tier}
+                                        </Badge>
+                                        {sub.is_trial && (
+                                            <span className="ml-1.5 text-xs" style={{ color: "var(--text-muted)" }}>trial</span>
+                                        )}
+                                    </td>
+                                    <td className={tableCellClass()}>
+                                        <Badge tone={tone} size="md">{formatStatus(displayStatus)}</Badge>
+                                    </td>
+                                    <td className={tableCellClass()} style={{ color: "var(--text-secondary)" }}>
+                                        {formatBillingCycle(sub.billing_cycle)}
+                                    </td>
+                                    <td className={tableCellClass()} style={{ color: "var(--text-secondary)" }}>
+                                        {formatExpiryDate(sub.expires_at, sub.isLifetime)}
+                                    </td>
+                                    <td className={tableCellClass()}>
+                                        {daysLabel === "Expired" ? (
+                                            <Badge tone="warning" size="md">Expired</Badge>
+                                        ) : daysLabel === "—" ? (
+                                            <span style={{ color: "var(--text-muted)" }}>—</span>
+                                        ) : (
+                                            <span
+                                                className="text-sm font-semibold tabular-nums"
+                                                style={{
+                                                    color: daysTone === "warning" ? "#fbbf24" : "var(--text-secondary)",
+                                                }}
+                                            >
+                                                {daysLabel}
+                                            </span>
+                                        )}
+                                    </td>
                                 </tr>
-                            </thead>
-                            <tbody>
-                                {subs.map((sub, i) => {
-                                    const tier = TIER_MAP[sub.subscriptionPlan?.plan_tier] ?? TIER_MAP.basic;
-                                    const stat = STATUS_MAP[sub.status] ?? STATUS_MAP.active;
-                                    const isGuest = sub.user?.userType === "guest";
+                            );
+                        })}
+                    </DataTable>
+                </PageContent>
+            </Panel>
 
-                                    return (
-                                        <tr key={sub.id}
-                                            style={{ borderBottom: i < subs.length - 1 ? "1px solid var(--border)" : "none" }}
-                                            className="transition-colors hover:bg-[#0ea5e9]/5">
-
-                                            {/* User */}
-                                            <td className="px-5 py-4">
-                                                <div className="flex items-center gap-3">
-                                                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-white text-xs font-bold shrink-0 ${isGuest ? "bg-gradient-to-br from-[#ec4899] to-[#be185d]" : "bg-gradient-to-br from-[#0ea5e9] to-[#7c3aed]"}`}>
-                                                        {(sub.user?.name || "?").charAt(0).toUpperCase()}
-                                                    </div>
-                                                    <div>
-                                                        <p className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-                                                            {isGuest ? "Guest User" : (sub.user?.name || "—")}
-                                                        </p>
-                                                        <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                                                            {sub.user?.email || sub.user?.name || "—"}
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                            </td>
-
-                                            {/* Plan */}
-                                            <td className="px-5 py-4">
-                                                <span className="px-2.5 py-1 rounded-lg text-xs font-bold"
-                                                    style={{ background: tier.bg, color: tier.color }}>
-                                                    {tier.label}
-                                                </span>
-                                            </td>
-
-                                            {/* Status */}
-                                            <td className="px-5 py-4">
-                                                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold w-fit"
-                                                    style={{ background: stat.bg, color: stat.color }}>
-                                                    <span className={`w-1.5 h-1.5 rounded-full ${stat.dot} animate-pulse`} />
-                                                    {sub.status}
-                                                </span>
-                                            </td>
-
-                                            {/* Billing */}
-                                            <td className="px-5 py-4">
-                                                <span className="text-sm capitalize" style={{ color: "var(--text-secondary)" }}>
-                                                    {sub.billing_cycle || "—"}
-                                                </span>
-                                            </td>
-
-                                            {/* Features */}
-                                            <td className="px-5 py-4">
-                                                <div className="flex gap-1.5 flex-wrap">
-                                                    <span className="text-xs px-1.5 py-0.5 rounded"
-                                                        style={{ background: "var(--bg-secondary)", color: "var(--text-muted)" }}>
-                                                        {sub.subscriptionPlan?.profile_allowed ?? 0} profile{(sub.subscriptionPlan?.profile_allowed ?? 0) !== 1 ? "s" : ""}
-                                                    </span>
-                                                    {sub.subscriptionPlan?.ai_feature && (
-                                                        <span className="text-xs px-1.5 py-0.5 rounded bg-[#8b5cf6]/10 text-[#8b5cf6]">AI</span>
-                                                    )}
-                                                    {sub.subscriptionPlan?.history_feature && (
-                                                        <span className="text-xs px-1.5 py-0.5 rounded bg-[#0ea5e9]/10 text-[#0ea5e9]">History</span>
-                                                    )}
-                                                </div>
-                                            </td>
-
-                                            {/* Started */}
-                                            <td className="px-5 py-4">
-                                                <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
-                                                    {formatDate(sub.started_at)}
-                                                </span>
-                                            </td>
-
-                                            {/* Expires */}
-                                            <td className="px-5 py-4">
-                                                <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
-                                                    {formatDate(sub.expires_at)}
-                                                </span>
-                                            </td>
-
-                                            {/* Days remaining */}
-                                            <td className="px-5 py-4">
-                                                <span className={`text-sm font-semibold ${sub.isExpiringSoon ? "text-amber-500" : sub.isExpired ? "text-red-500" : ""}`}
-                                                    style={!sub.isExpiringSoon && !sub.isExpired ? { color: "var(--text-secondary)" } : {}}>
-                                                    {sub.daysRemaining > 36000 ? "∞" : `${sub.daysRemaining}d`}
-                                                </span>
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
-            </div>
-
-            {/* ── Pagination ───────────────────────────────────── */}
-            {pagination.totalPages > 1 && (
-                <div className="flex items-center justify-between">
-                    <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-                        Page {pagination.page} of {pagination.totalPages}
-                    </p>
-                    <div className="flex gap-2">
-                        <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
-                            className="px-4 py-2 rounded-xl text-sm font-medium disabled:opacity-40"
-                            style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-primary)" }}>
-                            Previous
-                        </button>
-                        <button onClick={() => setPage(p => Math.min(pagination.totalPages, p + 1))}
-                            disabled={page === pagination.totalPages}
-                            className="px-4 py-2 rounded-xl text-sm font-medium disabled:opacity-40"
-                            style={{ background: "#0ea5e9", color: "white" }}>
-                            Next
-                        </button>
-                    </div>
-                </div>
-            )}
-        </div>
+            <PaginationBar
+                page={page}
+                totalPages={totalPages}
+                disabled={loading}
+                onPrev={() => setPage((p) => Math.max(1, p - 1))}
+                onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
+            />
+        </PageShell>
     );
 }

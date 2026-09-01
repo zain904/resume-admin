@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import api from "@/lib/api";
+import { formatBillingCycle } from "@/components/admin/AdminUI";
 
 interface Profile {
     id: string;
@@ -117,10 +118,10 @@ export default function UserDetailPage() {
     const profile = user.profiles?.[activeProfile] || null;
     const displayName = profile?.fullName || user.name || "Unknown";
     const planTier = user.UserSubscription?.subscriptionPlan?.plan_tier || "basic";
-    const planMap: Record<string, { color: string; bg: string }> = {
-        premium_pro: { color: "#8b5cf6", bg: "#8b5cf615" },
-        premium: { color: "#0ea5e9", bg: "#0ea5e915" },
-        basic: { color: "#64748b", bg: "#64748b15" },
+    const planMap: Record<string, { color: string; bg: string; label: string }> = {
+        premium_pro: { color: "#8b5cf6", bg: "#8b5cf615", label: "Pro" },
+        basic: { color: "#64748b", bg: "#64748b15", label: "Free" },
+        premium: { color: "#94a3b8", bg: "#94a3b815", label: "Legacy" },
     };
     const plan = planMap[planTier] || planMap.basic;
 
@@ -167,7 +168,7 @@ export default function UserDetailPage() {
                                 </h2>
                                 <span className="px-2.5 py-0.5 rounded-lg text-xs font-bold"
                                     style={{ background: plan.bg, color: plan.color }}>
-                                    {planTier.replace("_", " ").toUpperCase()}
+                                    {plan.label}
                                 </span>
                                 <span className="px-2.5 py-0.5 rounded-lg text-xs font-bold"
                                     style={{
@@ -493,7 +494,7 @@ export default function UserDetailPage() {
                                 {[
                                     { label: "Plan", value: user.UserSubscription.subscriptionPlan?.name || planTier },
                                     { label: "Status", value: user.UserSubscription.status },
-                                    { label: "Billing", value: user.UserSubscription.billing_cycle },
+                                    { label: "Billing", value: formatBillingCycle(user.UserSubscription.billing_cycle) },
                                     {
                                         label: "Expires",
                                         value: new Date(user.UserSubscription.expires_at).getFullYear() > 2100

@@ -1,994 +1,357 @@
-// "use client";
-
-// import { useEffect, useMemo, useState } from "react";
-// import api from "@/lib/api";
-
-// // ---------------------------------------------------------------------------
-// // Payload shape returned by GET /admin/onboardingFunnelV2
-// // Mirror of the backend `getOnboardingFunnelV2` controller so a
-// // backend-only tweak (adding a step / segment) shows up here as a
-// // compile error instead of a silent empty row.
-// // ---------------------------------------------------------------------------
-// type Segment = {
-//     key: string;
-//     label: string;
-//     users: number;
-// };
-
-// type MainStep = {
-//     index: number;
-//     key: string;
-//     label: string;
-//     users?: number;
-//     segments?: Segment[];
-// };
-
-// type EditStep = {
-//     index: number;
-//     key: string;
-//     label: string;
-//     users: number;
-// };
-
-// type SegmentedBlock = {
-//     key: string;
-//     label: string;
-//     segments: Segment[];
-// };
-
-// type FunnelV2Response = {
-//     totalStarted: number;
-//     endings: {
-//         leftViaSignIn: number;
-//         finalAction: number;
-//     };
-//     main: MainStep[];
-//     editBranch: {
-//         cohortSize: number;
-//         steps: EditStep[];
-//         savePromptShown: { key: string; label: string; users: number };
-//         signInOutcomes: SegmentedBlock;
-//         finalActions: SegmentedBlock;
-//     };
-// };
-
-// // Color palette for segments. Each segment gets a stable color so the
-// // same label always renders in the same shade across refreshes.
-// const SEGMENT_COLORS = [
-//     "#6366f1", // indigo
-//     "#22d3ee", // cyan
-//     "#f59e0b", // amber
-//     "#10b981", // emerald
-//     "#ef4444", // red
-//     "#a855f7", // purple
-// ];
-
-// function segmentColor(index: number): string {
-//     return SEGMENT_COLORS[index % SEGMENT_COLORS.length];
-// }
-
-// function pct(n: number, denom: number): number {
-//     if (!denom || denom <= 0) return 0;
-//     return Math.round((n / denom) * 100);
-// }
-
-// // ---------------------------------------------------------------------------
-// // Re-usable bits
-// // ---------------------------------------------------------------------------
-// function KpiTile({
-//     title,
-//     value,
-//     hint,
-//     accent,
-// }: {
-//     title: string;
-//     value: number;
-//     hint?: string;
-//     accent?: string;
-// }) {
-//     return (
-//         <div
-//             className="rounded-xl p-4"
-//             style={{ background: "var(--bg-secondary)" }}
-//         >
-//             <p
-//                 className="text-xs uppercase tracking-widest"
-//                 style={{ color: "var(--text-muted)" }}
-//             >
-//                 {title}
-//             </p>
-//             <p
-//                 className="text-2xl font-black mt-1"
-//                 style={{ color: accent || "var(--text-primary)" }}
-//             >
-//                 {value.toLocaleString()}
-//             </p>
-//             {hint ? (
-//                 <p
-//                     className="text-xs mt-1"
-//                     style={{ color: "var(--text-muted)" }}
-//                 >
-//                     {hint}
-//                 </p>
-//             ) : null}
-//         </div>
-//     );
-// }
-
-// function SingleBarRow({
-//     label,
-//     users,
-//     widthPct,
-//     stepNumber,
-//     fromPrevPct,
-//     denominatorLabel,
-// }: {
-//     label: string;
-//     users: number;
-//     widthPct: number;
-//     stepNumber?: string;
-//     fromPrevPct?: number | null;
-//     denominatorLabel: string;
-// }) {
-//     return (
-//         <div>
-//             <div className="flex items-center justify-between mb-1.5">
-//                 <p
-//                     className="text-sm font-semibold"
-//                     style={{ color: "var(--text-primary)" }}
-//                 >
-//                     {stepNumber ? `${stepNumber}. ` : ""}
-//                     {label}
-//                 </p>
-//                 <div
-//                     className="text-xs"
-//                     style={{ color: "var(--text-muted)" }}
-//                 >
-//                     {users.toLocaleString()} users
-//                 </div>
-//             </div>
-//             <div
-//                 className="h-2.5 rounded-full overflow-hidden"
-//                 style={{ background: "var(--bg-secondary)" }}
-//             >
-//                 <div
-//                     className="h-full rounded-full bg-linear-to-r from-[#6366f1] to-[#22d3ee]"
-//                     style={{ width: `${Math.max(widthPct, 2)}%` }}
-//                 />
-//             </div>
-//             <div
-//                 className="flex items-center justify-between mt-1.5 text-xs"
-//                 style={{ color: "var(--text-muted)" }}
-//             >
-//                 <span>
-//                     {widthPct}% {denominatorLabel}
-//                 </span>
-//                 {fromPrevPct != null ? (
-//                     <span>{fromPrevPct}% from previous step</span>
-//                 ) : null}
-//             </div>
-//         </div>
-//     );
-// }
-
-// function SegmentedBarRow({
-//     label,
-//     segments,
-//     stepNumber,
-//     denominator,
-//     denominatorLabel,
-// }: {
-//     label: string;
-//     segments: Segment[];
-//     stepNumber?: string;
-//     denominator: number;
-//     denominatorLabel: string;
-// }) {
-//     const total = segments.reduce((sum, s) => sum + (s.users || 0), 0);
-//     const barDenom = Math.max(total, 1);
-
-//     return (
-//         <div>
-//             <div className="flex items-center justify-between mb-1.5">
-//                 <p
-//                     className="text-sm font-semibold"
-//                     style={{ color: "var(--text-primary)" }}
-//                 >
-//                     {stepNumber ? `${stepNumber}. ` : ""}
-//                     {label}
-//                 </p>
-//                 <div
-//                     className="text-xs"
-//                     style={{ color: "var(--text-muted)" }}
-//                 >
-//                     {total.toLocaleString()} users
-//                 </div>
-//             </div>
-//             <div
-//                 className="h-2.5 rounded-full overflow-hidden flex"
-//                 style={{ background: "var(--bg-secondary)" }}
-//             >
-//                 {segments.map((seg, i) => {
-//                     const widthPct = (seg.users / barDenom) * 100;
-//                     return (
-//                         <div
-//                             key={seg.key}
-//                             className="h-full"
-//                             style={{
-//                                 width: `${widthPct}%`,
-//                                 background: segmentColor(i),
-//                             }}
-//                             title={`${seg.label}: ${seg.users.toLocaleString()}`}
-//                         />
-//                     );
-//                 })}
-//             </div>
-//             <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-xs">
-//                 {segments.map((seg, i) => (
-//                     <span
-//                         key={`${seg.key}-legend`}
-//                         className="inline-flex items-center gap-1.5"
-//                         style={{ color: "var(--text-muted)" }}
-//                     >
-//                         <span
-//                             className="inline-block w-2.5 h-2.5 rounded-sm"
-//                             style={{ background: segmentColor(i) }}
-//                         />
-//                         {seg.label}: {seg.users.toLocaleString()}{" "}
-//                         {denominator > 0
-//                             ? `(${pct(seg.users, denominator)}% ${denominatorLabel})`
-//                             : ""}
-//                     </span>
-//                 ))}
-//             </div>
-//         </div>
-//     );
-// }
-
-// // ---------------------------------------------------------------------------
-// // Page
-// // ---------------------------------------------------------------------------
-// export default function OnboardingFunnelPage() {
-//     const [loading, setLoading] = useState(true);
-//     const [error, setError] = useState<string | null>(null);
-//     const [data, setData] = useState<FunnelV2Response | null>(null);
-
-//     useEffect(() => {
-//         const load = async () => {
-//             try {
-//                 setLoading(true);
-//                 setError(null);
-//                 const res = await api.get("/admin/onboardingFunnelV2");
-//                 const body = res?.data?.data as FunnelV2Response | undefined;
-//                 if (!body) {
-//                     throw new Error("Empty response");
-//                 }
-//                 setData(body);
-//             } catch {
-//                 setError(
-//                     "Could not load the onboarding funnel. Make sure the backend exposes /admin/onboardingFunnelV2.",
-//                 );
-//             } finally {
-//                 setLoading(false);
-//             }
-//         };
-//         load();
-//     }, []);
-
-//     // Denominator for the main flow: total users who started onboarding.
-//     // We clamp to 1 so divide-by-zero doesn't blow up the bar widths.
-//     const startCount = useMemo(() => {
-//         const firstStep = data?.main?.[0];
-//         const fromStep = firstStep?.users ?? 0;
-//         return Math.max(data?.totalStarted ?? fromStep, 1);
-//     }, [data]);
-
-//     const editCohortSize = useMemo(() => {
-//         return Math.max(data?.editBranch?.cohortSize ?? 0, 1);
-//     }, [data]);
-
-//     // We only show the "from previous step" footnote on single-count
-//     // steps — segmented steps don't have a single number to compare.
-//     const prevUsersForStep = useMemo(() => {
-//         const map: Record<number, number> = {};
-//         if (!data?.main) return map;
-//         let prev = 0;
-//         for (const step of data.main) {
-//             const thisCount =
-//                 step.users ??
-//                 (step.segments
-//                     ? step.segments.reduce((s, seg) => s + (seg.users || 0), 0)
-//                     : 0);
-//             map[step.index] = prev;
-//             prev = thisCount;
-//         }
-//         return map;
-//     }, [data]);
-
-//     if (loading) {
-//         return (
-//             <div className="min-h-[60vh] flex items-center justify-center">
-//                 <div
-//                     className="text-sm font-medium"
-//                     style={{ color: "var(--text-muted)" }}
-//                 >
-//                     Loading onboarding funnel...
-//                 </div>
-//             </div>
-//         );
-//     }
-
-//     return (
-//         <div className="space-y-6">
-//             {/* Header + 3 KPI tiles for the funnel's three ending points. */}
-//             <div
-//                 className="rounded-2xl p-6"
-//                 style={{
-//                     background: "var(--bg-card)",
-//                     border: "1px solid var(--border)",
-//                 }}
-//             >
-//                 <h1
-//                     className="text-xl font-bold"
-//                     style={{ color: "var(--text-primary)" }}
-//                 >
-//                     Onboarding Funnel
-//                 </h1>
-//                 <p
-//                     className="text-sm mt-1"
-//                     style={{ color: "var(--text-muted)" }}
-//                 >
-//                     Single-funnel view of the full onboarding journey with
-//                     two ending points: users who leave via the{" "}
-//                     <span className="font-semibold">Sign-in</span> dialog
-//                     inside Review &amp; Download, and users whose last
-//                     action is{" "}
-//                     <span className="font-semibold">share / download / close</span>
-//                     {" "}on the final resume.
-//                 </p>
-
-//                 {error && (
-//                     <div className="mt-4 text-sm rounded-xl px-4 py-3 bg-amber-50 text-amber-700 border border-amber-100">
-//                         {error}
-//                     </div>
-//                 )}
-
-//                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-5">
-//                     <KpiTile
-//                         title="End 1 · Left via sign-in"
-//                         value={data?.endings.leftViaSignIn ?? 0}
-//                         hint={`${pct(data?.endings.leftViaSignIn ?? 0, editCohortSize)}% of Review & Download cohort`}
-//                         accent="#f59e0b"
-//                     />
-//                     <KpiTile
-//                         title="End 2 · Final action (share/download/close)"
-//                         value={data?.endings.finalAction ?? 0}
-//                         hint={`${pct(data?.endings.finalAction ?? 0, editCohortSize)}% of Review & Download cohort`}
-//                         accent="#6366f1"
-//                     />
-//                 </div>
-//             </div>
-
-//             {/* Section A — main flow, steps 1-10. */}
-//             <div
-//                 className="rounded-2xl p-6"
-//                 style={{
-//                     background: "var(--bg-card)",
-//                     border: "1px solid var(--border)",
-//                 }}
-//             >
-//                 <div className="flex items-baseline justify-between mb-4">
-//                     <h2
-//                         className="text-base font-bold"
-//                         style={{ color: "var(--text-primary)" }}
-//                     >
-//                         Main flow (all users)
-//                     </h2>
-//                     <p
-//                         className="text-xs"
-//                         style={{ color: "var(--text-muted)" }}
-//                     >
-//                         {startCount.toLocaleString()} onboarding starts ·
-//                         bar widths are relative to this denominator
-//                     </p>
-//                 </div>
-
-//                 <div className="space-y-4">
-//                     {(data?.main || []).map((step) => {
-//                         const stepNumber = `${step.index}`;
-//                         if (step.segments && step.segments.length > 0) {
-//                             return (
-//                                 <SegmentedBarRow
-//                                     key={step.key}
-//                                     stepNumber={stepNumber}
-//                                     label={step.label}
-//                                     segments={step.segments}
-//                                     denominator={startCount}
-//                                     denominatorLabel="of onboarding starts"
-//                                 />
-//                             );
-//                         }
-//                         const users = step.users ?? 0;
-//                         const prev = prevUsersForStep[step.index] ?? 0;
-//                         const fromPrev =
-//                             prev > 0 ? Math.round((users / prev) * 100) : null;
-//                         return (
-//                             <SingleBarRow
-//                                 key={step.key}
-//                                 stepNumber={stepNumber}
-//                                 label={step.label}
-//                                 users={users}
-//                                 widthPct={pct(users, startCount)}
-//                                 fromPrevPct={fromPrev}
-//                                 denominatorLabel="of onboarding starts"
-//                             />
-//                         );
-//                     })}
-//                 </div>
-//             </div>
-
-//             {/* Section B — Review-and-Download branch (formerly edit-my-details). */}
-//             <div
-//                 className="rounded-2xl p-6"
-//                 style={{
-//                     background: "var(--bg-card)",
-//                     border: "1px solid var(--border)",
-//                 }}
-//             >
-//                 <div className="flex items-baseline justify-between mb-4">
-//                     <h2
-//                         className="text-base font-bold"
-//                         style={{ color: "var(--text-primary)" }}
-//                     >
-//                         Review &amp; Download branch
-//                     </h2>
-//                     <p
-//                         className="text-xs"
-//                         style={{ color: "var(--text-muted)" }}
-//                     >
-//                         {(data?.editBranch?.cohortSize ?? 0).toLocaleString()}{" "}
-//                         users in cohort · bar widths relative to cohort size
-//                     </p>
-//                 </div>
-
-//                 <div className="space-y-4">
-//                     {(data?.editBranch?.steps || []).map((step) => {
-//                         const stepLabel = `12.${step.index}`;
-//                         return (
-//                             <SingleBarRow
-//                                 key={step.key}
-//                                 stepNumber={stepLabel}
-//                                 label={step.label}
-//                                 users={step.users}
-//                                 widthPct={pct(step.users, editCohortSize)}
-//                                 denominatorLabel="of edit-details cohort"
-//                             />
-//                         );
-//                     })}
-
-//                     {data?.editBranch?.savePromptShown ? (
-//                         <SingleBarRow
-//                             stepNumber="13"
-//                             label={data.editBranch.savePromptShown.label}
-//                             users={data.editBranch.savePromptShown.users}
-//                             widthPct={pct(
-//                                 data.editBranch.savePromptShown.users,
-//                                 editCohortSize,
-//                             )}
-//                             denominatorLabel="of edit-details cohort"
-//                         />
-//                     ) : null}
-
-//                     {data?.editBranch?.signInOutcomes ? (
-//                         <SegmentedBarRow
-//                             stepNumber="14"
-//                             label={data.editBranch.signInOutcomes.label}
-//                             segments={data.editBranch.signInOutcomes.segments}
-//                             denominator={
-//                                 data.editBranch.savePromptShown?.users ||
-//                                 editCohortSize
-//                             }
-//                             denominatorLabel="of save-prompt shown"
-//                         />
-//                     ) : null}
-
-//                     {data?.editBranch?.finalActions ? (
-//                         <SegmentedBarRow
-//                             stepNumber="16"
-//                             label={data.editBranch.finalActions.label}
-//                             segments={data.editBranch.finalActions.segments}
-//                             denominator={editCohortSize}
-//                             denominatorLabel="of edit-details cohort"
-//                         />
-//                     ) : null}
-//                 </div>
-//             </div>
-//         </div>
-//     );
-// }
-
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import api from "@/lib/api";
+import {
+    FunnelChart,
+    FunnelRow,
+    PageContent,
+    PageHeader,
+    PageShell,
+    Panel,
+    StatGrid,
+} from "@/components/admin/AdminUI";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 type Segment = { key: string; label: string; users: number };
-type MainStep = { index: number; key: string; label: string; users?: number; segments?: Segment[] };
-type EditStep = { index: number; key: string; label: string; users: number };
-type SegmentedBlock = { key: string; label: string; segments: Segment[] };
-type SimpleRow = { key: string; label: string; users: number };
-type BuildMethodDetail = {
-  screen: SimpleRow;
-  selected: { key: string; label: string; segments: Segment[] };
-  quickAi: SimpleRow[];
-  linkedin: SimpleRow[];
-  upload: SimpleRow[];
+type Step = { key: string; label: string; users?: number; segments?: Segment[]; index?: number };
+type DetailRow = { key: string; label: string; users: number };
+
+type OnboardingV2 = {
+    totalStarted: number;
+    flowBreakdown?: {
+        careerGoalStarted: number;
+        legacyStarted: number;
+        careerGoalFinished: number;
+    };
+    endings?: { leftViaSignIn: number; finalAction: number };
+    main: Step[];
+    jobPrefsDetail: DetailRow[];
+    buildMethodDetail: {
+        screen: DetailRow;
+        selected: { label: string; segments: Segment[] };
+        quickAi: DetailRow[];
+        linkedin: DetailRow[];
+        upload: DetailRow[];
+    };
+    editBranch: {
+        cohortSize: number;
+        steps: Step[];
+        savePromptShown: DetailRow;
+        signInOutcomes: { label: string; segments: Segment[] };
+        finalActions: { label: string; segments: Segment[] };
+    };
 };
-type FunnelV2Response = {
-  totalStarted: number;
-  endings: { leftViaSignIn: number; finalAction: number };
-  main: MainStep[];
-  jobPrefsDetail?: SimpleRow[];
-  buildMethodDetail?: BuildMethodDetail;
-  editBranch: {
-    cohortSize: number;
-    steps: EditStep[];
-    savePromptShown: SimpleRow;
-    signInOutcomes: SegmentedBlock;
-    finalActions: SegmentedBlock;
-  };
-};
 
-// ─── Utils ────────────────────────────────────────────────────────────────────
-const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0);
-const fmt = (n: number) => n.toLocaleString();
+type ExtraStep = { label: string; users: number };
 
-const SEG_COLORS = ["#6366f1", "#22d3ee", "#f59e0b", "#10b981", "#f43f5e", "#a855f7"];
-const segClr = (i: number) => SEG_COLORS[i % SEG_COLORS.length];
+const EXTRA_KEYS = new Set([
+    "trial_modal_shown",
+    "trial_modal_start_clicked",
+    "trial_modal_started_success",
+    "trial_modal_skipped",
+    "completed",
+    "job_alert_prompt",
+    "job_alert_notif_granted",
+    "job_alert_notif_denied",
+]);
 
-function dropColor(r: number) {
-  if (r >= 75) return "#10b981";
-  if (r >= 50) return "#f59e0b";
-  return "#f43f5e";
+function stepAccent(key: string): FunnelRow["accent"] {
+    if (key.startsWith("cg_") || key === "onboarding_started") return "purple";
+    if (key === "preview_action" || key.startsWith("final")) return "green";
+    if (key === "notif_choice" || key.includes("job_prefs")) return "amber";
+    return "sky";
 }
 
-// ─── Single funnel row ────────────────────────────────────────────────────────
-function Row({
-  index,
-  label,
-  users,
-  denominator,
-  prevUsers,
-  segments,
-  barColor = "#6366f1",
-  isNew,
-}: {
-  index?: string | number;
-  label: string;
-  users: number;
-  denominator: number;
-  prevUsers?: number;
-  segments?: Segment[];
-  barColor?: string;
-  isNew?: boolean;
-}) {
-  const isSegmented = !!segments?.length;
-  const total = isSegmented ? segments!.reduce((s, g) => s + g.users, 0) : users;
-  const width = pct(total, Math.max(denominator, 1));
-  const retained = prevUsers ? pct(total, prevUsers) : null;
-  const segTotal = isSegmented ? Math.max(segments!.reduce((s, g) => s + g.users, 0), 1) : 1;
-
-  return (
-    <div className="py-4">
-      {/* Top row: step label + user count */}
-      <div className="flex items-baseline justify-between mb-2">
-        <div className="flex items-center gap-2">
-          {index !== undefined && (
-            <span className="text-xs tabular-nums w-6 text-right flex-shrink-0"
-              style={{ color: "var(--text-muted)" }}>
-              {index}
-            </span>
-          )}
-          <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-            {label}
-          </span>
-          {isNew && (
-            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
-              style={{ background: "#10b98120", color: "#10b981" }}>
-              new
-            </span>
-          )}
-        </div>
-        <span className="text-sm font-semibold tabular-nums ml-4 flex-shrink-0"
-          style={{ color: "var(--text-primary)" }}>
-          {fmt(total)}
-        </span>
-      </div>
-
-      {/* Bar */}
-      <div className="flex items-center gap-3"
-        style={{ paddingLeft: index !== undefined ? 32 : 0 }}>
-        <div className="flex-1 relative h-2 rounded-full overflow-hidden"
-          style={{ background: "var(--bg-secondary)" }}>
-          {!isSegmented ? (
-            <div className="absolute inset-y-0 left-0 rounded-full"
-              style={{ width: `${Math.max(width, 1)}%`, background: barColor }} />
-          ) : (
-            <div className="absolute inset-0 flex">
-              {segments!.map((seg, i) => (
-                <div key={seg.key} className="h-full"
-                  style={{ width: `${(seg.users / segTotal) * 100}%`, background: segClr(i) }}
-                  title={`${seg.label}: ${fmt(seg.users)}`} />
-              ))}
-            </div>
-          )}
-        </div>
-        <span className="text-xs tabular-nums w-9 text-right flex-shrink-0"
-          style={{ color: "var(--text-muted)" }}>
-          {width}%
-        </span>
-      </div>
-
-      {/* Segment legend */}
-      {isSegmented && (
-        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2"
-          style={{ paddingLeft: index !== undefined ? 32 : 0 }}>
-          {segments!.map((seg, i) => (
-            <span key={seg.key} className="inline-flex items-center gap-1.5 text-xs"
-              style={{ color: "var(--text-muted)" }}>
-              <span className="inline-block w-2 h-2 rounded-sm flex-shrink-0"
-                style={{ background: segClr(i) }} />
-              {seg.label}
-              <span className="font-medium" style={{ color: "var(--text-primary)" }}>
-                {fmt(seg.users)}
-              </span>
-              <span>({pct(seg.users, segTotal)}%)</span>
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* Drop-off */}
-      {retained !== null && (
-        <div className="flex items-center gap-1.5 mt-1.5"
-          style={{ paddingLeft: index !== undefined ? 32 : 0 }}>
-          <span className="text-xs font-medium tabular-nums"
-            style={{ color: dropColor(retained) }}>
-            {retained}% from prev
-          </span>
-          {prevUsers && prevUsers > total && (
-            <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-              · {fmt(prevUsers - total)} dropped
-            </span>
-          )}
-        </div>
-      )}
-    </div>
-  );
+function toChartRows(steps: Step[]): FunnelRow[] {
+    return steps.map((s) => ({
+        index: s.index,
+        label: s.label,
+        users: s.users,
+        accent: stepAccent(s.key),
+        segments: s.segments?.map((seg) => ({ label: seg.label, users: seg.users })),
+    }));
 }
 
-// ─── Section wrapper ──────────────────────────────────────────────────────────
-function Section({
-  title,
-  meta,
-  children,
-  collapsible = false,
-  defaultOpen = true,
-}: {
-  title: string;
-  meta?: string;
-  children: React.ReactNode;
-  collapsible?: boolean;
-  defaultOpen?: boolean;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-
-  return (
-    <div className="rounded-xl overflow-hidden"
-      style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
-      <div
-        className={`flex items-center justify-between px-5 py-3 ${collapsible ? "cursor-pointer select-none" : ""}`}
-        style={{ borderBottom: open ? "1px solid var(--border)" : undefined }}
-        onClick={() => collapsible && setOpen(v => !v)}
-      >
-        <div className="flex items-center gap-3">
-          <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-            {title}
-          </span>
-          {meta && (
-            <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-              {meta}
-            </span>
-          )}
-        </div>
-        {collapsible && (
-          <span style={{ color: "var(--text-muted)", fontSize: 12 }}>
-            {open ? "▲" : "▼"}
-          </span>
-        )}
-      </div>
-      {open && (
-        <div className="px-5 divide-y" style={{ borderColor: "var(--border)" }}>
-          {children}
-        </div>
-      )}
-    </div>
-  );
+function detailToRows(rows: DetailRow[], accent: FunnelRow["accent"] = "sky"): FunnelRow[] {
+    return rows.map((r) => ({ label: r.label, users: r.users, accent }));
 }
 
-// ─── KPI tiles ────────────────────────────────────────────────────────────────
-function KpiTile({ label, value, sub, color }: { label: string; value: number; sub: string; color: string }) {
-  return (
-    <div className="rounded-xl p-4" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
-      <p className="text-xs mb-1" style={{ color: "var(--text-muted)" }}>{label}</p>
-      <p className="text-2xl font-bold tabular-nums mb-0.5" style={{ color }}>{fmt(value)}</p>
-      <p className="text-xs" style={{ color: "var(--text-muted)" }}>{sub}</p>
-    </div>
-  );
-}
-
-// ─── Page ─────────────────────────────────────────────────────────────────────
 export default function OnboardingFunnelPage() {
-  const [loading, setLoading] = useState(true);
-  const [error, setError]   = useState<string | null>(null);
-  const [data, setData]     = useState<FunnelV2Response | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [data, setData] = useState<OnboardingV2 | null>(null);
+    const [extraSteps, setExtraSteps] = useState<ExtraStep[]>([]);
+    const [activeTab, setActiveTab] = useState<"overview" | "details">("overview");
 
-  useEffect(() => {
-    (async () => {
-      try {
-        setLoading(true); setError(null);
-        const res  = await api.get("/admin/onboardingFunnelV2");
-        const body = res?.data?.data as FunnelV2Response | undefined;
-        if (!body) throw new Error("Empty response");
-        setData(body);
-      } catch {
-        setError("Could not load the onboarding funnel. Check that /admin/onboardingFunnelV2 is reachable.");
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
+    const load = useCallback(async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const v2Res = await api.get("/admin/onboardingFunnelV2");
+            const v2Data = v2Res?.data?.data;
+            if (!v2Data?.main) {
+                setError("Onboarding data is empty.");
+                setData(null);
+                return;
+            }
+            setData(v2Data);
 
-  const totalStarted   = useMemo(() => Math.max(data?.totalStarted ?? 1, 1), [data]);
-  const editCohortSize = useMemo(() => Math.max(data?.editBranch?.cohortSize ?? 0, 1), [data]);
-  const mainStepUsers  = useMemo(() =>
-    (data?.main ?? []).map(s => s.users ?? s.segments?.reduce((a, b) => a + b.users, 0) ?? 0),
-    [data]);
-  const buildScreenUsers = data?.buildMethodDetail?.screen?.users ?? 0;
+            try {
+                const v1Res = await api.get("/admin/onboardingFunnel");
+                const v1Steps: { key: string; label: string; users: number }[] = v1Res?.data?.data?.steps ?? [];
+                const v2Keys = new Set(
+                    (v2Data.main ?? []).flatMap((s: Step) => [s.key, ...(s.segments?.map((x) => x.key) ?? [])])
+                );
+                setExtraSteps(
+                    v1Steps
+                        .filter((s) => !v2Keys.has(s.key) && EXTRA_KEYS.has(s.key))
+                        .map((s) => ({ label: s.label, users: s.users }))
+                );
+            } catch {
+                setExtraSteps([]);
+            }
+        } catch {
+            setData(null);
+            setError("Unable to load onboarding funnel.");
+        } finally {
+            setLoading(false);
+        }
+    }, []);
 
-  if (loading) {
-    return (
-      <div className="min-h-[50vh] flex flex-col items-center justify-center gap-3">
-        <div className="space-y-2 w-48 animate-pulse">
-          {[100, 80, 65, 55, 42].map((w, i) => (
-            <div key={i} className="h-2 rounded-full"
-              style={{ width: `${w}%`, background: "var(--bg-secondary)" }} />
-          ))}
-        </div>
-        <p className="text-xs" style={{ color: "var(--text-muted)" }}>Loading…</p>
-      </div>
+    useEffect(() => { load(); }, [load]);
+
+    const base = Math.max(data?.totalStarted ?? 0, 1);
+    const editBase = Math.max(data?.editBranch?.cohortSize ?? 0, 1);
+    const cgStarted = data?.flowBreakdown?.careerGoalStarted ?? 0;
+    const reviewRate = data ? Math.round((data.editBranch.cohortSize / base) * 100) : 0;
+    const cgFinishRate = cgStarted > 0
+        ? Math.round(((data?.flowBreakdown?.careerGoalFinished ?? 0) / cgStarted) * 100)
+        : 0;
+
+    const mainRows = useMemo(() => (data ? toChartRows(data.main) : []), [data]);
+    const careerGoalRows = useMemo(
+        () => mainRows.filter((r) => r.index != null && r.index <= 8),
+        [mainRows]
     );
-  }
-
-  if (error || !data) {
-    return (
-      <div className="rounded-xl p-5 text-sm"
-        style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "#f43f5e" }}>
-        {error ?? "No data."}
-      </div>
+    const legacyRows = useMemo(
+        () => mainRows.filter((r) => r.index != null && r.index > 8),
+        [mainRows]
     );
-  }
 
-  return (
-    <div className="space-y-4 pb-8">
+    const buildRows = useMemo((): FunnelRow[] => {
+        if (!data) return [];
+        const d = data.buildMethodDetail;
+        return [
+            { label: d.screen.label, users: d.screen.users, accent: "sky" },
+            {
+                label: d.selected.label,
+                accent: "sky",
+                segments: d.selected.segments.map((s) => ({ label: s.label, users: s.users })),
+            },
+            ...d.quickAi.map((r) => ({ label: `Quick AI — ${r.label}`, users: r.users, accent: "sky" as const })),
+            ...d.linkedin.map((r) => ({ label: `LinkedIn — ${r.label}`, users: r.users, accent: "sky" as const })),
+            ...d.upload.map((r) => ({ label: `Upload — ${r.label}`, users: r.users, accent: "sky" as const })),
+        ];
+    }, [data]);
 
-      {/* Header */}
-      <div>
-        <h1 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>
-          Onboarding Funnel
-        </h1>
-        <p className="text-sm mt-0.5" style={{ color: "var(--text-muted)" }}>
-          Full journey from first open to final resume action.
-        </p>
-      </div>
+    const editRows = useMemo((): FunnelRow[] => {
+        if (!data) return [];
+        const b = data.editBranch;
+        return [
+            ...toChartRows(b.steps).map((r) => ({ ...r, accent: "green" as const })),
+            { label: b.savePromptShown.label, users: b.savePromptShown.users, accent: "green" },
+            {
+                label: b.signInOutcomes.label,
+                accent: "green",
+                segments: b.signInOutcomes.segments.map((s) => ({ label: s.label, users: s.users })),
+            },
+            {
+                label: b.finalActions.label,
+                accent: "green",
+                segments: b.finalActions.segments.map((s) => ({ label: s.label, users: s.users })),
+            },
+        ];
+    }, [data]);
 
-      {/* KPI strip */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-        <KpiTile label="Onboarding starts" value={data.totalStarted}
-          sub="Unique users" color="#6366f1" />
-        <KpiTile label="Reached Review & Download" value={data.editBranch.cohortSize}
-          sub={`${pct(data.editBranch.cohortSize, totalStarted)}% of starts`} color="#22d3ee" />
-        <KpiTile label="Left via sign-in" value={data.endings.leftViaSignIn}
-          sub={`${pct(data.endings.leftViaSignIn, editCohortSize)}% of R&D cohort`} color="#f59e0b" />
-        <KpiTile label="Completed final action" value={data.endings.finalAction}
-          sub={`${pct(data.endings.finalAction, editCohortSize)}% of R&D cohort`} color="#10b981" />
-      </div>
-
-      {/* Main flow */}
-      <Section title="Main Flow" meta={`${fmt(totalStarted)} starts`}>
-        {data.main.map((step, idx) => {
-          const users = step.users ?? step.segments?.reduce((a, b) => a + b.users, 0) ?? 0;
-          return (
-            <Row
-              key={step.key}
-              index={step.index}
-              label={step.label}
-              users={users}
-              denominator={totalStarted}
-              prevUsers={idx > 0 ? mainStepUsers[idx - 1] : undefined}
-              segments={step.segments}
-              barColor="#6366f1"
+    return (
+        <PageShell>
+            <PageHeader
+                title="Onboarding Funnel"
+                description="Track user conversion from first open through career goal quiz to resume download."
+                action={
+                    <button
+                        onClick={load}
+                        disabled={loading}
+                        className="px-3 py-2 rounded-lg text-sm font-medium transition-opacity disabled:opacity-50"
+                        style={{
+                            background: "var(--bg-card)",
+                            border: "1px solid var(--border)",
+                            color: "var(--text-secondary)",
+                        }}
+                    >
+                        Refresh
+                    </button>
+                }
             />
-          );
-        })}
-      </Section>
 
-      {/* Job prefs detail — only when v3 backend */}
-      {data.jobPrefsDetail && (
-        <Section
-          title="Job Preferences Detail"
-          meta="bottom sheet · new events"
-          collapsible
-          defaultOpen={false}
-        >
-          {data.jobPrefsDetail.map((row, idx) => (
-            <Row
-              key={row.key}
-              index={idx + 1}
-              label={row.label}
-              users={row.users}
-              denominator={data.main.find(s => s.key === "job_prefs_shown")?.users ?? totalStarted}
-              prevUsers={idx > 0 ? data.jobPrefsDetail![idx - 1].users : undefined}
-              barColor="#38bdf8"
-              isNew
-            />
-          ))}
-        </Section>
-      )}
+            <PageContent
+                loading={loading}
+                error={error}
+                isEmpty={!data}
+                emptyMessage="No onboarding data yet."
+                loadingMessage="Loading funnel data…"
+            >
+                {data && (
+                    <>
+                        {/* Hero conversion strip */}
+                        <div
+                            className="rounded-xl p-5 lg:p-6 relative overflow-hidden"
+                            style={{
+                                background: "linear-gradient(135deg, rgba(124,58,237,0.12) 0%, rgba(14,165,233,0.08) 50%, rgba(16,185,129,0.06) 100%)",
+                                border: "1px solid var(--border)",
+                            }}
+                        >
+                            <div className="relative grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div>
+                                    <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+                                        Overall conversion
+                                    </p>
+                                    <p className="text-4xl font-bold tabular-nums mt-1" style={{ color: "var(--text-primary)" }}>
+                                        {reviewRate}%
+                                    </p>
+                                    <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>
+                                        {data.editBranch.cohortSize.toLocaleString()} reached review & download
+                                    </p>
+                                </div>
+                                <div>
+                                    <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+                                        Career goal completion
+                                    </p>
+                                    <p className="text-4xl font-bold tabular-nums mt-1" style={{ color: "#a78bfa" }}>
+                                        {cgFinishRate}%
+                                    </p>
+                                    <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>
+                                        {data.flowBreakdown?.careerGoalFinished?.toLocaleString() ?? 0} finished the quiz
+                                    </p>
+                                </div>
+                                <div>
+                                    <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+                                        Final actions
+                                    </p>
+                                    <p className="text-4xl font-bold tabular-nums mt-1" style={{ color: "#34d399" }}>
+                                        {data.endings?.finalAction?.toLocaleString() ?? 0}
+                                    </p>
+                                    <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>
+                                        Share, download, or close after preview
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
 
-      {/* Build method detail — only when v3 backend */}
-      {data.buildMethodDetail && (
-        <Section
-          title="Build Method Detail"
-          meta="per-branch breakdown · new events"
-          collapsible
-          defaultOpen={false}
-        >
-          <Row
-            index="B1"
-            label={data.buildMethodDetail.screen.label}
-            users={data.buildMethodDetail.screen.users}
-            denominator={totalStarted}
-            prevUsers={data.main.find(s => s.key === "template_selected")?.users}
-            barColor="#a855f7"
-            isNew
-          />
-          <Row
-            index="B2"
-            label={data.buildMethodDetail.selected.label}
-            users={data.buildMethodDetail.selected.segments.reduce((a, b) => a + b.users, 0)}
-            denominator={buildScreenUsers || totalStarted}
-            prevUsers={data.buildMethodDetail.screen.users}
-            segments={data.buildMethodDetail.selected.segments}
-            isNew
-          />
+                        <StatGrid
+                            items={[
+                                { label: "Total started", value: data.totalStarted, sub: "New + legacy combined", accent: "sky" },
+                                { label: "Career goal (new)", value: cgStarted, sub: "New app build", accent: "purple" },
+                                { label: "Legacy flow", value: data.flowBreakdown?.legacyStarted ?? 0, sub: "Older onboarding path", accent: "amber" },
+                                { label: "Final action", value: data.endings?.finalAction ?? 0, sub: "Completed preview step", accent: "green" },
+                            ]}
+                        />
 
-          {/* Branch sub-rows — Quick AI */}
-          <div className="py-3">
-            <p className="text-xs font-semibold mb-2 pl-8" style={{ color: "var(--text-muted)" }}>
-              Quick AI
-            </p>
-            {data.buildMethodDetail.quickAi.map((r, idx) => (
-              <Row key={r.key} label={r.label} users={r.users}
-                denominator={data.buildMethodDetail!.selected.segments.find(s => s.key === "quick")?.users ?? buildScreenUsers}
-                prevUsers={idx > 0 ? data.buildMethodDetail!.quickAi[idx - 1].users : undefined}
-                barColor="#6366f1" isNew />
-            ))}
-          </div>
+                        {/* Tab switcher */}
+                        <div
+                            className="inline-flex p-1 rounded-lg"
+                            style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}
+                        >
+                            {(["overview", "details"] as const).map((tab) => (
+                                <button
+                                    key={tab}
+                                    onClick={() => setActiveTab(tab)}
+                                    className="px-4 py-2 rounded-md text-sm font-medium capitalize transition-all"
+                                    style={{
+                                        background: activeTab === tab ? "var(--accent)" : "transparent",
+                                        color: activeTab === tab ? "#fff" : "var(--text-muted)",
+                                    }}
+                                >
+                                    {tab}
+                                </button>
+                            ))}
+                        </div>
 
-          {/* LinkedIn */}
-          <div className="py-3">
-            <p className="text-xs font-semibold mb-2 pl-8" style={{ color: "var(--text-muted)" }}>
-              LinkedIn Import
-            </p>
-            {data.buildMethodDetail.linkedin.map((r, idx) => (
-              <Row key={r.key} label={r.label} users={r.users}
-                denominator={data.buildMethodDetail!.selected.segments.find(s => s.key === "linkedin")?.users ?? buildScreenUsers}
-                prevUsers={idx > 0 ? data.buildMethodDetail!.linkedin[idx - 1].users : undefined}
-                barColor="#22d3ee" isNew />
-            ))}
-          </div>
+                        {activeTab === "overview" ? (
+                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 w-full">
+                                <Panel
+                                    title="Career goal quiz"
+                                    subtitle="New onboarding path — steps 1–8"
+                                    highlight="purple"
+                                    className="xl:col-span-2"
+                                >
+                                    <FunnelChart base={base} rows={careerGoalRows} />
+                                </Panel>
 
-          {/* Upload */}
-          <div className="py-3">
-            <p className="text-xs font-semibold mb-2 pl-8" style={{ color: "var(--text-muted)" }}>
-              Resume Upload
-            </p>
-            {data.buildMethodDetail.upload.map((r, idx) => (
-              <Row key={r.key} label={r.label} users={r.users}
-                denominator={data.buildMethodDetail!.selected.segments.find(s => s.key === "upload")?.users ?? buildScreenUsers}
-                prevUsers={idx > 0 ? data.buildMethodDetail!.upload[idx - 1].users : undefined}
-                barColor="#f59e0b" isNew />
-            ))}
-          </div>
-        </Section>
-      )}
+                                <Panel
+                                    title="Resume build (legacy path)"
+                                    subtitle="Template selection through review — steps 9–17"
+                                    highlight="sky"
+                                    className="xl:col-span-2"
+                                >
+                                    <FunnelChart base={base} rows={legacyRows} />
+                                </Panel>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 w-full">
+                                <Panel title="Job preferences" subtitle="Preference sheet detail events" highlight="amber">
+                                    <FunnelChart base={base} rows={detailToRows(data.jobPrefsDetail, "amber")} />
+                                </Panel>
 
-      {/* Review & Download branch */}
-      <Section title="Review & Download" meta={`${fmt(data.editBranch.cohortSize)} in cohort`}>
-        {data.editBranch.steps.map((step, idx) => (
-          <Row
-            key={step.key}
-            index={`${idx + 1}`}
-            label={step.label}
-            users={step.users}
-            denominator={editCohortSize}
-            prevUsers={idx === 0 ? editCohortSize : data.editBranch.steps[idx - 1].users}
-            barColor="#f59e0b"
-          />
-        ))}
-        <Row
-          index={data.editBranch.steps.length + 1}
-          label={data.editBranch.savePromptShown.label}
-          users={data.editBranch.savePromptShown.users}
-          denominator={editCohortSize}
-          prevUsers={data.editBranch.steps[data.editBranch.steps.length - 1]?.users ?? editCohortSize}
-          barColor="#f59e0b"
-        />
-        <Row
-          index={data.editBranch.steps.length + 2}
-          label={data.editBranch.signInOutcomes.label}
-          users={data.editBranch.signInOutcomes.segments.reduce((a, b) => a + b.users, 0)}
-          denominator={data.editBranch.savePromptShown.users || editCohortSize}
-          prevUsers={data.editBranch.savePromptShown.users}
-          segments={data.editBranch.signInOutcomes.segments}
-        />
-        <Row
-          index={data.editBranch.steps.length + 3}
-          label={data.editBranch.finalActions.label}
-          users={data.editBranch.finalActions.segments.reduce((a, b) => a + b.users, 0)}
-          denominator={editCohortSize}
-          segments={data.editBranch.finalActions.segments}
-        />
-      </Section>
+                                <Panel title="Build method" subtitle="Quick AI, LinkedIn, or upload" highlight="sky">
+                                    <FunnelChart base={base} rows={buildRows} />
+                                </Panel>
 
-      {/* Terminal outcomes */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {[
-          {
-            label: "Left via Sign-in",
-            value: data.endings.leftViaSignIn,
-            color: "#f59e0b",
-            desc: "Attempted sign-in inside R&D; did not reach a final action.",
-          },
-          {
-            label: "Completed a final action",
-            value: data.endings.finalAction,
-            color: "#10b981",
-            desc: "Shared, downloaded, or closed the final resume preview.",
-          },
-        ].map(e => {
-          const w = pct(e.value, editCohortSize);
-          return (
-            <div key={e.label} className="rounded-xl p-4"
-              style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
-              <div className="flex items-baseline justify-between mb-3">
-                <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>{e.label}</p>
-                <p className="text-xl font-bold tabular-nums" style={{ color: e.color }}>{fmt(e.value)}</p>
-              </div>
-              <div className="h-1.5 rounded-full overflow-hidden mb-2"
-                style={{ background: "var(--bg-secondary)" }}>
-                <div className="h-full rounded-full" style={{ width: `${w}%`, background: e.color }} />
-              </div>
-              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                <span style={{ color: e.color, fontWeight: 600 }}>{w}%</span> of R&D cohort · {e.desc}
-              </p>
-            </div>
-          );
-        })}
-      </div>
+                                <Panel
+                                    title="Edit profile & download"
+                                    subtitle={`${data.editBranch.cohortSize.toLocaleString()} users in this cohort`}
+                                    highlight="green"
+                                    className="xl:col-span-2"
+                                >
+                                    <FunnelChart base={editBase} rows={editRows} />
+                                </Panel>
 
-    </div>
-  );
+                                {extraSteps.length > 0 && (
+                                    <Panel title="Trial & completion" subtitle="Extra events from legacy tracking" className="xl:col-span-2">
+                                        <FunnelChart
+                                            base={base}
+                                            rows={extraSteps.map((s) => ({ label: s.label, users: s.users, accent: "amber" as const }))}
+                                        />
+                                    </Panel>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Legend */}
+                        <div
+                            className="flex flex-wrap gap-4 px-4 py-3 rounded-lg text-xs"
+                            style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}
+                        >
+                            <span className="flex items-center gap-2" style={{ color: "var(--text-muted)" }}>
+                                <span className="w-3 h-3 rounded-sm" style={{ background: "linear-gradient(90deg, #7c3aed, #a78bfa)" }} />
+                                Career goal (new)
+                            </span>
+                            <span className="flex items-center gap-2" style={{ color: "var(--text-muted)" }}>
+                                <span className="w-3 h-3 rounded-sm" style={{ background: "linear-gradient(90deg, #0ea5e9, #38bdf8)" }} />
+                                Legacy resume build
+                            </span>
+                            <span className="flex items-center gap-2" style={{ color: "var(--text-muted)" }}>
+                                <span className="w-3 h-3 rounded-sm" style={{ background: "linear-gradient(90deg, #059669, #34d399)" }} />
+                                Edit & download
+                            </span>
+                            <span className="flex items-center gap-2" style={{ color: "var(--text-muted)" }}>
+                                <span className="w-3 h-3 rounded-sm" style={{ background: "linear-gradient(90deg, #d97706, #fbbf24)" }} />
+                                Job preferences
+                            </span>
+                        </div>
+                    </>
+                )}
+            </PageContent>
+        </PageShell>
+    );
 }

@@ -57,6 +57,16 @@ const navItems = [
         ),
     },
     {
+        label: "Notifications",
+        href: "/dashboard/notifications",
+        icon: (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+                    d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+            </svg>
+        ),
+    },
+    {
         label: "Templates",
         href: "/dashboard/templates",
         icon: (
@@ -97,6 +107,89 @@ const navItems = [
         ),
     },
 ];
+
+const systemItems = [
+    {
+        label: "Settings",
+        href: "/dashboard/settings",
+        icon: (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+                    d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+        ),
+    },
+];
+
+type NavItem = (typeof navItems)[number];
+
+function NavLink({
+    item,
+    isActive,
+    isCollapsed,
+    onClose,
+}: {
+    item: NavItem;
+    isActive: boolean;
+    isCollapsed: boolean;
+    onClose: () => void;
+}) {
+    return (
+        <div className="relative group">
+            <Link
+                href={item.href}
+                onClick={onClose}
+                className={`
+                    flex items-center gap-3 rounded-xl text-sm font-medium
+                    transition-all duration-150 relative
+                    ${isCollapsed ? "justify-center px-0 py-3 mx-1" : "px-3 py-2.5"}
+                  `}
+                style={{
+                    background: isActive
+                        ? "linear-gradient(135deg, #0ea5e920, #7c3aed15)"
+                        : "transparent",
+                    color: isActive ? "var(--accent)" : "var(--text-secondary)",
+                    border: isActive ? "1px solid var(--accent)20" : "1px solid transparent",
+                }}
+            >
+                {isActive && !isCollapsed && (
+                    <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 rounded-full bg-gradient-to-b from-[#0ea5e9] to-[#7c3aed]" />
+                )}
+                <span
+                    className={`shrink-0 transition-all duration-150 ${isCollapsed ? "" : "ml-1"}`}
+                    style={{ color: isActive ? "var(--accent)" : "var(--text-muted)" }}
+                >
+                    {item.icon}
+                </span>
+                {!isCollapsed && (
+                    <span className="flex-1 truncate">{item.label}</span>
+                )}
+                {isActive && !isCollapsed && (
+                    <span className="w-1.5 h-1.5 rounded-full shrink-0"
+                        style={{ background: "var(--accent)" }} />
+                )}
+            </Link>
+            {isCollapsed && (
+                <div
+                    className="absolute left-full top-1/2 -translate-y-1/2 ml-3 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap
+                      opacity-0 pointer-events-none group-hover:opacity-100 transition-all duration-200 z-50"
+                    style={{
+                        background: "var(--text-primary)",
+                        color: "var(--bg-primary)",
+                        boxShadow: "var(--shadow-md)",
+                    }}
+                >
+                    {item.label}
+                    <div
+                        className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent"
+                        style={{ borderRightColor: "var(--text-primary)" }}
+                    />
+                </div>
+            )}
+        </div>
+    );
+}
 
 interface SidebarProps {
     isOpen: boolean;
@@ -213,77 +306,39 @@ export default function Sidebar({
                         </p>
                     )}
 
-                    {navItems.map((item) => {
-                        const isActive =
-                            item.href === "/dashboard"
-                                ? pathname === "/dashboard"
-                                : pathname.startsWith(item.href);
+                    {navItems.map((item) => (
+                        <NavLink
+                            key={item.href}
+                            item={item}
+                            isCollapsed={isCollapsed}
+                            onClose={onClose}
+                            isActive={
+                                item.href === "/dashboard"
+                                    ? pathname === "/dashboard"
+                                    : pathname.startsWith(item.href)
+                            }
+                        />
+                    ))}
 
-                        return (
-                            <div key={item.href} className="relative group">
-                                <Link
-                                    href={item.href}
-                                    onClick={onClose}
-                                    className={`
-                    flex items-center gap-3 rounded-xl text-sm font-medium
-                    transition-all duration-150 relative
-                    ${isCollapsed ? "justify-center px-0 py-3 mx-1" : "px-3 py-2.5"}
-                  `}
-                                    style={{
-                                        background: isActive
-                                            ? "linear-gradient(135deg, #0ea5e920, #7c3aed15)"
-                                            : "transparent",
-                                        color: isActive ? "var(--accent)" : "var(--text-secondary)",
-                                        border: isActive ? "1px solid var(--accent)20" : "1px solid transparent",
-                                    }}
-                                >
-                                    {/* active left bar */}
-                                    {isActive && !isCollapsed && (
-                                        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 rounded-full bg-gradient-to-b from-[#0ea5e9] to-[#7c3aed]" />
-                                    )}
+                    {!isCollapsed && (
+                        <p className="text-xs font-bold uppercase tracking-widest px-3 pb-2 pt-4"
+                            style={{ color: "var(--text-muted)" }}>
+                            System
+                        </p>
+                    )}
+                    {isCollapsed && (
+                        <div className="mx-3 my-2" style={{ borderTop: "1px solid var(--border)" }} />
+                    )}
 
-                                    {/* icon */}
-                                    <span
-                                        className={`shrink-0 transition-all duration-150 ${isCollapsed ? "" : "ml-1"}`}
-                                        style={{ color: isActive ? "var(--accent)" : "var(--text-muted)" }}
-                                    >
-                                        {item.icon}
-                                    </span>
-
-                                    {/* label */}
-                                    {!isCollapsed && (
-                                        <span className="flex-1 truncate">{item.label}</span>
-                                    )}
-
-                                    {/* active dot */}
-                                    {isActive && !isCollapsed && (
-                                        <span className="w-1.5 h-1.5 rounded-full shrink-0"
-                                            style={{ background: "var(--accent)" }} />
-                                    )}
-                                </Link>
-
-                                {/* Tooltip when collapsed */}
-                                {isCollapsed && (
-                                    <div
-                                        className="absolute left-full top-1/2 -translate-y-1/2 ml-3 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap
-                      opacity-0 pointer-events-none group-hover:opacity-100 transition-all duration-200 z-50"
-                                        style={{
-                                            background: "var(--text-primary)",
-                                            color: "var(--bg-primary)",
-                                            boxShadow: "var(--shadow-md)",
-                                        }}
-                                    >
-                                        {item.label}
-                                        {/* arrow */}
-                                        <div
-                                            className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent"
-                                            style={{ borderRightColor: "var(--text-primary)" }}
-                                        />
-                                    </div>
-                                )}
-                            </div>
-                        );
-                    })}
+                    {systemItems.map((item) => (
+                        <NavLink
+                            key={item.href}
+                            item={item}
+                            isCollapsed={isCollapsed}
+                            onClose={onClose}
+                            isActive={pathname.startsWith(item.href)}
+                        />
+                    ))}
                 </nav>
 
                 {/* ── BOTTOM ── */}
