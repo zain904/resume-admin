@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import api from "@/lib/api";
 import {
@@ -9,6 +9,7 @@ import {
     LoadingState,
     PageHeader,
     PageShell,
+    PaginationBar,
     Panel,
     StatGrid,
     tableCellClass,
@@ -33,67 +34,77 @@ interface User {
     } | null;
     UserSubscription: {
         status: string;
-        SubscriptionPlan: { plan_tier: string; name: string };
+        SubscriptionPlan: { plan_tier: string; name: string } | null;
     } | null;
 }
 
 type TabType = "all" | "user" | "guest";
 
+const PAGE_SIZE = 20;
+
 export default function UsersPage() {
     const [users, setUsers] = useState<User[]>([]);
-    const [filtered, setFiltered] = useState<User[]>([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState("");
+    const [debouncedSearch, setDebouncedSearch] = useState("");
     const [tab, setTab] = useState<TabType>("all");
     const [view, setView] = useState<"table" | "grid">("table");
+    const [page, setPage] = useState(1);
+    const [totalPages, setTotalPages] = useState(1);
+    const [filteredTotal, setFilteredTotal] = useState(0);
+    const [summary, setSummary] = useState({ total: 0, members: 0, guests: 0 });
 
-    const fetchUsers = async () => {
+    useEffect(() => {
+        const t = setTimeout(() => setDebouncedSearch(search.trim()), 350);
+        return () => clearTimeout(t);
+    }, [search]);
+
+    useEffect(() => {
+        setPage(1);
+    }, [debouncedSearch, tab]);
+
+    const fetchUsers = useCallback(async (p: number) => {
         setLoading(true);
         try {
-            const res = await api.get("/admin/getAllUsers");
-            // handle both array response and paginated response
-            const data = Array.isArray(res.data)
-                ? res.data
-                : res.data.data?.users || res.data.data || [];
-            setUsers(data);
-            setFiltered(data);
+            const params = new URLSearchParams({
+                page: String(p),
+                limit: String(PAGE_SIZE),
+            });
+            if (tab !== "all") params.set("userType", tab);
+            if (debouncedSearch) params.set("search", debouncedSearch);
+
+            const res = await api.get(`/admin/getAllUsers?${params}`);
+            const body = res.data;
+            const data = Array.isArray(body)
+                ? body
+                : body?.data?.users || body?.data || [];
+
+            setUsers(Array.isArray(data) ? data : []);
+            setSummary({
+                total: body?.summary?.total ?? 0,
+                members: body?.summary?.members ?? 0,
+                guests: body?.summary?.guests ?? 0,
+            });
+            setFilteredTotal(body?.pagination?.total ?? (Array.isArray(data) ? data.length : 0));
+            setTotalPages(body?.pagination?.totalPages ?? 1);
         } catch (err) {
             console.error("Failed to fetch users:", err);
             setUsers([]);
-            setFiltered([]);
+            setFilteredTotal(0);
+            setTotalPages(1);
         } finally {
             setLoading(false);
         }
-    };
+    }, [debouncedSearch, tab]);
 
     useEffect(() => {
-        fetchUsers();
-    }, []);
-
-    // Filter by tab + search
-    useEffect(() => {
-        let result = users;
-
-        if (tab !== "all") {
-            result = result.filter((u) => u.userType === tab);
-        }
-
-        if (search.trim()) {
-            const q = search.toLowerCase();
-            result = result.filter(
-                (u) =>
-                    u.name?.toLowerCase().includes(q) ||
-                    u.email?.toLowerCase().includes(q)
-            );
-        }
-
-        setFiltered(result);
-    }, [tab, search, users]);
+        fetchUsers(page);
+    }, [page, fetchUsers]);
 
     const counts = {
-        all: users.length,
-        user: users.filter((u) => u.userType === "user").length,
-        guest: users.filter((u) => u.userType === "guest").length,
+        all: summary.total,
+        user: summary.members,
+        guest: summary.guests,
     };
 
     const getPlan = (user: User) => {
@@ -104,6 +115,13 @@ export default function UsersPage() {
             premium: { label: "Legacy", color: "#94a3b8", bg: "#94a3b815" },
         };
         return map[tier] || map.basic;
+    };
+
+    const displayNameOf = (user: User, fallback = "—") => {
+        if (user.Profile?.first_name) {
+            return `${user.Profile.first_name} ${user.Profile.last_name || ""}`.trim();
+        }
+        return user.name || fallback;
     };
 
     const gradients = [
@@ -136,7 +154,7 @@ export default function UsersPage() {
         <PageShell>
             <PageHeader
                 title="Users"
-                description={`${users.length.toLocaleString()} total users registered`}
+                description={`${summary.total.toLocaleString()} total users registered`}
                 action={
                     <div className="flex items-center gap-1 p-1 rounded-xl"
                         style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
@@ -160,10 +178,7 @@ export default function UsersPage() {
                 }
             />
 
-            {/* ── TABS ── */}
             <div className="flex flex-col sm:flex-row gap-3">
-
-                {/* Tab buttons */}
                 <div className="flex gap-2">
                     {tabs.map((t) => (
                         <button
@@ -186,13 +201,12 @@ export default function UsersPage() {
                                     color: tab === t.key ? "white" : "var(--text-muted)",
                                 }}
                             >
-                                {counts[t.key]}
+                                {counts[t.key].toLocaleString()}
                             </span>
                         </button>
                     ))}
                 </div>
 
-                {/* Search */}
                 <div className="relative flex-1">
                     <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4"
                         style={{ color: "var(--text-muted)" }}
@@ -224,19 +238,17 @@ export default function UsersPage() {
 
             {loading ? (
                 <LoadingState />
-            ) : filtered.length === 0 ? (
+            ) : users.length === 0 ? (
                 <p className="text-sm text-center py-12" style={{ color: "var(--text-muted)" }}>
                     No {tab !== "all" ? tab : ""} users found
                 </p>
             ) : view === "table" ? (
                 <Panel noPadding>
                     <DataTable columns={TABLE_COLUMNS}>
-                        {filtered.map((user, i) => {
+                        {users.map((user, i) => {
                             const plan = getPlan(user);
                             const grad = gradients[i % gradients.length];
-                            const displayName = user.Profile?.first_name
-                                ? `${user.Profile.first_name} ${user.Profile.last_name || ""}`.trim()
-                                : user.name || "—";
+                            const displayName = displayNameOf(user);
                             const isUser = user.userType === "user";
 
                             return (
@@ -310,20 +322,18 @@ export default function UsersPage() {
                 </Panel>
             ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                    {filtered.map((user, i) => {
+                    {users.map((user, i) => {
                         const plan = getPlan(user);
                         const grad = gradients[i % gradients.length];
                         const isUser = user.userType === "user";
-                        const displayName = user.Profile?.first_name
-                            ? `${user.Profile.first_name} ${user.Profile.last_name || ""}`.trim()
-                            : user.name || "Unknown";
+                        const displayName = displayNameOf(user, "Unknown");
 
                         return (
                             <div key={user.id}
-                                className="rounded-2xl overflow-hidden transition-all duration-200 hover:-translate-y-1 hover:shadow-xl"
+                                className="rounded-2xl transition-all duration-200 hover:-translate-y-1 hover:shadow-xl"
                                 style={{ background: "var(--bg-card)", border: "1px solid var(--border)", boxShadow: "var(--shadow)" }}>
 
-                                <div className={`h-20 bg-gradient-to-br ${grad} relative overflow-hidden`}>
+                                <div className={`h-24 rounded-t-2xl bg-gradient-to-br ${grad} relative overflow-hidden`}>
                                     <div className="absolute inset-0 opacity-20"
                                         style={{
                                             backgroundImage: "radial-gradient(circle at 20% 50%, white 1px, transparent 1px)",
@@ -332,13 +342,13 @@ export default function UsersPage() {
                                 </div>
 
                                 <div className="px-5 pb-5">
-                                    <div className="-mt-7 mb-3 flex items-end justify-between">
+                                    <div className="relative z-10 -mt-8 mb-3 flex items-end justify-between">
                                         {user.Profile?.photo_url ? (
                                             <img src={user.Profile.photo_url} alt={displayName}
-                                                className="w-14 h-14 rounded-xl object-cover border-4"
+                                                className="w-16 h-16 rounded-xl object-cover shrink-0 border-4"
                                                 style={{ borderColor: "var(--bg-card)" }} />
                                         ) : (
-                                            <div className={`w-14 h-14 rounded-xl bg-gradient-to-br ${grad} flex items-center justify-center text-white text-lg font-bold border-4`}
+                                            <div className={`w-16 h-16 rounded-xl bg-gradient-to-br ${grad} flex items-center justify-center text-white text-lg font-bold shrink-0 border-4`}
                                                 style={{ borderColor: "var(--bg-card)" }}>
                                                 {displayName.charAt(0).toUpperCase()}
                                             </div>
@@ -414,11 +424,19 @@ export default function UsersPage() {
                 </div>
             )}
 
-            {!loading && filtered.length > 0 && (
+            {!loading && users.length > 0 && (
                 <p className="text-xs text-center" style={{ color: "var(--text-muted)" }}>
-                    Showing {filtered.length} of {users.length} users
+                    Showing {users.length} of {filteredTotal.toLocaleString()} users
                 </p>
             )}
+
+            <PaginationBar
+                page={page}
+                totalPages={totalPages}
+                disabled={loading}
+                onPrev={() => setPage((p) => Math.max(1, p - 1))}
+                onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
+            />
         </PageShell>
     );
 }

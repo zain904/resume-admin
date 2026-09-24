@@ -19,6 +19,7 @@ interface ResumeProfile {
     emailAddress: string | null;
     mobileNumber: string | null;
     position: string | null;
+    profilePhoto: string | null;
     isArchive: boolean;
     createdAt: string;
     user: ResumeUser;
@@ -159,9 +160,15 @@ export default function ResumesPage() {
                                 className="rounded-2xl overflow-hidden transition-all duration-200 hover:-translate-y-1 hover:shadow-xl cursor-pointer"
                                 style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
 
-                                {/* ── Template preview ─────────────────── */}
-                                <div className="relative h-36 overflow-hidden">
-                                    {resume.template?.preview_url ? (
+                                {/* ── User-generated resume preview ───── */}
+                                <div className="relative h-72 overflow-hidden bg-white">
+                                    {resume.url ? (
+                                        <iframe
+                                            src={`${resume.url}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`}
+                                            className="w-full h-[520px] pointer-events-none border-0"
+                                            title={`${displayName} resume`}
+                                        />
+                                    ) : resume.template?.preview_url ? (
                                         <img
                                             src={resume.template.preview_url}
                                             alt={resume.template.name}
@@ -207,9 +214,14 @@ export default function ResumesPage() {
                                 {/* ── Info ─────────────────────────────── */}
                                 <div className="p-4">
                                     <div className="flex items-center gap-3 mb-3">
+                                        {profile?.profilePhoto ? (
+                                            <img src={profile.profilePhoto} alt={displayName}
+                                                className="w-9 h-9 rounded-xl object-cover shrink-0" />
+                                        ) : (
                                         <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-white text-sm font-bold shrink-0 ${isGuest ? "bg-gradient-to-br from-[#ec4899] to-[#be185d]" : "bg-gradient-to-br from-[#0ea5e9] to-[#7c3aed]"}`}>
                                             {initial}
                                         </div>
+                                        )}
                                         <div className="flex-1 min-w-0">
                                             <p className="text-sm font-bold truncate" style={{ color: "var(--text-primary)" }}>
                                                 {displayName}

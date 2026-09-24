@@ -139,22 +139,22 @@ export default function UserDetailPage() {
             </button>
 
             {/* User Hero */}
-            <div className="rounded-2xl overflow-hidden"
+            <div className="rounded-2xl"
                 style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
-                <div className="h-32 bg-gradient-to-br from-[#0c4a6e] via-[#1e3a8a] to-[#4c1d95] relative overflow-hidden">
+                <div className="h-36 rounded-t-2xl bg-gradient-to-br from-[#0c4a6e] via-[#1e3a8a] to-[#4c1d95] relative overflow-hidden">
                     <div className="absolute inset-0 bg-gradient-to-tr from-[#0ea5e9]/20 via-transparent to-[#7c3aed]/20" />
                     <div className="absolute -top-8 -right-8 w-40 h-40 rounded-full bg-white/5" />
                 </div>
 
                 <div className="px-6 pb-6">
-                    <div className="flex flex-col sm:flex-row sm:items-end gap-4 -mt-10 mb-5">
+                    <div className="relative z-10 flex flex-col sm:flex-row sm:items-end gap-4 -mt-12 mb-5">
                         <div className="shrink-0">
                             {profile?.profilePhoto ? (
                                 <img src={profile.profilePhoto} alt={displayName}
-                                    className="w-20 h-20 rounded-2xl object-cover border-4"
+                                    className="w-24 h-24 rounded-2xl object-cover border-4"
                                     style={{ borderColor: "var(--bg-card)" }} />
                             ) : (
-                                <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-[#0ea5e9] to-[#7c3aed] flex items-center justify-center text-white text-3xl font-bold border-4"
+                                <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-[#0ea5e9] to-[#7c3aed] flex items-center justify-center text-white text-3xl font-bold border-4"
                                     style={{ borderColor: "var(--bg-card)" }}>
                                     {displayName.charAt(0).toUpperCase()}
                                 </div>
